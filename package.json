@@ -1,0 +1,22 @@
+{
+  "name": "hello-mcdo-auto",
+  "version": "2.0.0",
+  "description": "Automatisation du formulaire Hello McDo avec interface web",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "server": "node server.js"
+  },
+  "keywords": [
+    "puppeteer",
+    "automation",
+    "mcdo",
+    "survey"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.22.2",
+    "puppeteer": "^21.11.0"
+  }
+}

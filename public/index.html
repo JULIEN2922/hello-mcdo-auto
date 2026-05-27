@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello McDo - Automatisation</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🍔 Hello McDo - Automatisation</h1>
+            <p class="subtitle">Configurez et lancez vos scénarios de questionnaires automatiquement</p>
+        </header>
+
+        <div class="card">
+            <h2>📊 Configuration des Scénarios</h2>
+            
+            <form id="configForm">
+                <!-- Nombre de scénarios -->
+                <div class="form-group">
+                    <label for="nombre">
+                        <span class="label-icon">🔢</span>
+                        Nombre de scénarios à exécuter
+                    </label>
+                    <input type="number" id="nombre" name="nombre" min="1" value="5" required>
+                    <small>Nombre de questionnaires à remplir</small>
+                </div>
+
+                <!-- Plage horaire -->
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">⏰</span>
+                        Plage horaire
+                    </label>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="utiliserPlageHoraire" name="utiliserPlageHoraire">
+                        <label for="utiliserPlageHoraire" class="checkbox-label">
+                            Utiliser une plage horaire personnalisée
+                        </label>
+                    </div>
+                    <div id="plageHoraireInputs" class="hidden">
+                        <div class="time-range">
+                            <div>
+                                <label for="plageHoraireDateDebut">Date de début</label>
+                                <input type="date" id="plageHoraireDateDebut" name="plageHoraireDateDebut">
+                            </div>
+                            <div>
+                                <label for="plageHoraireDebut">Heure de début</label>
+                                <input type="time" id="plageHoraireDebut" name="plageHoraireDebut" value="08:00">
+                            </div>
+                        </div>
+                        <div class="time-range">
+                            <div>
+                                <label for="plageHoraireDateFin">Date de fin</label>
+                                <input type="date" id="plageHoraireDateFin" name="plageHoraireDateFin">
+                            </div>
+                            <div>
+                                <label for="plageHoraireFin">Heure de fin</label>
+                                <input type="time" id="plageHoraireFin" name="plageHoraireFin" value="22:00">
+                            </div>
+                        </div>
+                        <small>Les dates/heures des questionnaires seront réparties dans cette plage</small>
+                    </div>
+                </div>
+
+                <!-- Restaurant -->
+                <div class="form-group">
+                    <label for="numeroRestaurant">
+                        <span class="label-icon">🏪</span>
+                        Numéro du restaurant *
+                    </label>
+                    <input type="text" id="numeroRestaurant" name="numeroRestaurant" placeholder="Ex: 1318, 1234, etc." required>
+                    <small>Entrez le numéro du restaurant McDonald's (obligatoire)</small>
+                </div>
+
+                <!-- Lieux de commande et variantes -->
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">📱</span>
+                        Scénarios et variantes
+                    </label>
+                    <small>Sélectionnez les lieux de commande et leurs variantes spécifiques. Laissez vide pour tout sélectionner aléatoirement.</small>
+                    <div id="scenariosTree" class="scenarios-tree"></div>
+                </div>
+
+                <!-- Type d'avis -->
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">⭐</span>
+                        Type d'avis
+                    </label>
+                    <select id="typeAvis" name="typeAvis">
+                        <option value="excellent">⭐⭐⭐⭐⭐ Excellent (tout en vert)</option>
+                        <option value="bon">⭐⭐⭐⭐ Bon (4/5)</option>
+                        <option value="moyen">⭐⭐⭐ Moyen (3/5)</option>
+                        <option value="mauvais">⭐⭐ Mauvais (2/5)</option>
+                        <option value="aleatoire">🎲 Aléatoire</option>
+                    </select>
+                    <small>Note de satisfaction à attribuer</small>
+                </div>
+
+                <!-- Tranche d'âge -->
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">👤</span>
+                        Tranches d'âge
+                    </label>
+                    <small>Sélectionnez les tranches d'âge à utiliser. Laissez vide pour toutes les sélectionner.</small>
+                    <div class="checkbox-grid">
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="age_1" value="1">
+                            <label for="age_1" class="checkbox-label">Entre 15 et 24 ans</label>
+                        </div>
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="age_2" value="2" checked>
+                            <label for="age_2" class="checkbox-label">Entre 25 et 34 ans</label>
+                        </div>
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="age_3" value="3">
+                            <label for="age_3" class="checkbox-label">Entre 35 et 49 ans</label>
+                        </div>
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="age_4" value="4">
+                            <label for="age_4" class="checkbox-label">50 ans et plus</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Options avancées -->
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">⚙️</span>
+                        Options avancées
+                    </label>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="headless" name="headless" checked>
+                        <label for="headless" class="checkbox-label">
+                            Mode headless (sans interface graphique - plus rapide)
+                        </label>
+                    </div>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="debug" name="debug">
+                        <label for="debug" class="checkbox-label">
+                            Mode debug (captures d'écran à chaque étape)
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="concurrence">Concurrence</label>
+                            <input type="number" id="concurrence" name="concurrence" min="1" max="20" value="1">
+                            <small>Nombre de scénarios en parallèle</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="delaiMin">Délai min (secondes)</label>
+                            <input type="number" id="delaiMin" name="delaiMin" min="0" max="300" value="0">
+                            <small>Délai minimum entre les actions (simule un comportement humain)</small>
+                        </div>
+                        <div>
+                            <label for="delaiMax">Délai max (secondes)</label>
+                            <input type="number" id="delaiMax" name="delaiMax" min="0" max="300" value="0">
+                            <small>Délai maximum entre les actions (simule un comportement humain)</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Boutons d'action -->
+                <div class="actions">
+                    <button type="button" id="previewBtn" class="btn btn-secondary">
+                        👁️ Prévisualiser
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        🚀 Lancer l'exécution
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Prévisualisation -->
+        <div id="previewSection" class="card hidden">
+            <h2>👁️ Prévisualisation</h2>
+            <div id="previewContent"></div>
+        </div>
+
+        <!-- Progression -->
+        <div id="progressSection" class="card hidden">
+            <h2>📊 Progression</h2>
+            <div id="progressContent">
+                <div class="progress-bar">
+                    <div id="progressBar" class="progress-fill"></div>
+                </div>
+                <div id="progressStats"></div>
+                <div id="progressErrors"></div>
+            </div>
+            <button type="button" id="stopBtn" class="btn btn-danger">
+                ⛔ Arrêter l'exécution
+            </button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
