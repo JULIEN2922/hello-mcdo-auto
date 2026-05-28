@@ -249,16 +249,69 @@ app.post('/api/scenarios/preview', (req, res) => {
     }
     
     const scenarios = genererScenariosAleatoires(req.body);
-    res.json({
-      nombre: scenarios.length,
-      scenarios: scenarios.map(s => ({
-        restaurant: s.restaurant.nom,
-        restaurantId: s.restaurant.id,
-        lieuCommande: s.lieuCommande.label,
-        typeConsommation: s.typeConsommation.label,
-        lieuRecuperation: s.lieuRecuperation.label
-      }))
-    });
+    
+    // Calculer les dates/heures théoriques d'exécution
+    let dateExecutionTheorique = null;
+    
+    if (req.body.utiliserPlageHoraire) {
+      // Extraire la plage horaire
+      const dateDebut = new Date(`${req.body.plageHoraireDateDebut}T${req.body.plageHoraireHeureDebut}:00`);
+      const dateFin = new Date(`${req.body.plageHoraireDateFin}T${req.body.plageHoraireFin}:00`);
+      
+      const maintenant = Date.now();
+      const tempsDebut = dateDebut.getTime();
+      const tempsFin = dateFin.getTime();
+      const dureetotale = tempsFin - tempsDebut;
+      
+      // Calculer les moments théoriques pour chaque scénario
+      const scenariosAvecDates = scenarios.map((s, index) => {
+        // Distribution aléatoire dans la plage
+        const momentAleatoire = Math.random();
+        const delaiDepuisDebut = dureetotale * momentAleatoire;
+        const momentExecution = tempsDebut + delaiDepuisDebut;
+        
+        return {
+          restaurant: s.restaurant.nom,
+          restaurantId: s.restaurant.id,
+          lieuCommande: s.lieuCommande.label,
+          typeConsommation: s.typeConsommation.label,
+          lieuRecuperation: s.lieuRecuperation.label,
+          dateExecution: new Date(momentExecution).toLocaleString('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        };
+      });
+      
+      // Trier par date d'exécution
+      scenariosAvecDates.sort((a, b) => {
+        const dateA = new Date(a.dateExecution.split(' ')[0].split('/').reverse().join('-') + 'T' + a.dateExecution.split(' ')[1]);
+        const dateB = new Date(b.dateExecution.split(' ')[0].split('/').reverse().join('-') + 'T' + b.dateExecution.split(' ')[1]);
+        return dateA - dateB;
+      });
+      
+      res.json({
+        nombre: scenarios.length,
+        scenarios: scenariosAvecDates,
+        utiliserPlageHoraire: true
+      });
+    } else {
+      // Exécution immédiate
+      res.json({
+        nombre: scenarios.length,
+        scenarios: scenarios.map(s => ({
+          restaurant: s.restaurant.nom,
+          restaurantId: s.restaurant.id,
+          lieuCommande: s.lieuCommande.label,
+          typeConsommation: s.typeConsommation.label,
+          lieuRecuperation: s.lieuRecuperation.label
+        })),
+        utiliserPlageHoraire: false
+      });
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -305,6 +358,36 @@ function distribuerNotes(nombreScenarios, distributionAvis) {
 }
 
 /**
+ * Distribuer les âges selon les pourcentages définis
+ */
+function distribuerAges(nombreScenarios, distributionAge) {
+  const ages = [];
+  
+  // Calculer le nombre de scénarios pour chaque tranche d'âge selon les pourcentages
+  for (const [age, pourcentage] of Object.entries(distributionAge)) {
+    const nombre = Math.round((pourcentage / 100) * nombreScenarios);
+    for (let i = 0; i < nombre; i++) {
+      ages.push(parseInt(age));
+    }
+  }
+  
+  // Ajuster si le total ne correspond pas exactement (à cause des arrondis)
+  while (ages.length < nombreScenarios) {
+    // Ajouter l'âge le plus fréquent
+    const maxPourcentage = Math.max(...Object.values(distributionAge));
+    const ageMax = Object.keys(distributionAge).find(key => distributionAge[key] === maxPourcentage);
+    ages.push(parseInt(ageMax));
+  }
+  
+  while (ages.length > nombreScenarios) {
+    ages.pop();
+  }
+  
+  // Mélanger les âges pour une distribution aléatoire
+  return ages.sort(() => Math.random() - 0.5);
+}
+
+/**
  * Exécuter les scénarios avec planification dans le temps
  */
 async function executerScenariosAvecPlanification(scenarios, config, planning) {
@@ -326,16 +409,22 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
     ? distribuerNotes(scenarios.length, config.distributionAvis)
     : scenarios.map(() => ({ commandeExacte: true, problemeRencontre: false, note: 1 })); // Par défaut: excellent
   
+  // Distribuer les âges selon les pourcentages définis
+  const agesDistribues = config.distributionAge
+    ? distribuerAges(scenarios.length, config.distributionAge)
+    : scenarios.map(() => 2); // Par défaut: 25-34 ans
+  
   // Trier les moments d'exécution pour les traiter dans l'ordre chronologique
   const scenariosAvecMoments = scenarios.map((scenario, index) => ({
     scenario,
     momentExecution: momentsExecution[index],
     notePersonnalisee: notesDistribuees[index],
+    agePersonnalise: agesDistribues[index],
     index: index + 1
   })).sort((a, b) => a.momentExecution - b.momentExecution);
   
   // Créer les tâches avec délais planifiés aléatoires
-  const tasks = scenariosAvecMoments.map(({ scenario, momentExecution, notePersonnalisee, index }) => async () => {
+  const tasks = scenariosAvecMoments.map(({ scenario, momentExecution, notePersonnalisee, agePersonnalise, index }) => async () => {
     const scenarioName = `${scenario.restaurant.id}_${scenario.lieuCommande.id}_${scenario.typeConsommation.id}_${scenario.lieuRecuperation.id}`;
     
     const delaiAvantExecution = momentExecution - Date.now();
@@ -362,10 +451,6 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
         minute: String(dateExecution.getMinutes()).padStart(2, '0')
       } : null;
       
-      // Choisir un âge aléatoire parmi ceux sélectionnés
-      const ages = config.ages || [2]; // Par défaut 25-34 ans
-      const ageAleatoire = ages[Math.floor(Math.random() * ages.length)];
-      
       console.log(`🔄 Exécution du scénario ${index}/${scenarios.length} à ${dateExecution.toLocaleTimeString('fr-FR')}`);
       
       const resultat = await remplirScenario(
@@ -378,7 +463,7 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
           debug: config.debug === true,
           dateHeurePersonnalisee: dateHeure,
           notesPersonnalisees: notePersonnalisee,
-          age: ageAleatoire,
+          age: agePersonnalise,
           delaiMin: config.delaiMin || 0,
           delaiMax: config.delaiMax || 0
         }

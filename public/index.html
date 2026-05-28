@@ -134,28 +134,48 @@
                     </div>
                 </div>
 
-                <!-- Tranche d'âge -->
+                <!-- Distribution des tranches d'âge -->
                 <div class="form-group">
                     <label>
-                        Tranches d'âge
+                        Distribution des tranches d'âge (%)
                     </label>
-                    <small>Sélectionnez les tranches d'âge à utiliser. Laissez vide pour toutes les sélectionner.</small>
-                    <div class="checkbox-grid">
-                        <div class="checkbox-wrapper">
-                            <input type="checkbox" id="age_1" value="1">
-                            <label for="age_1" class="checkbox-label">Entre 15 et 24 ans</label>
+                    <small>Définissez le pourcentage de chaque tranche d'âge. Total doit être 100%.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age1">Entre 15 et 24 ans</label>
+                                <span class="rating-value" id="age1Value">10%</span>
+                            </div>
+                            <input type="range" id="age1" min="0" max="100" value="10" step="5" class="rating-slider">
                         </div>
-                        <div class="checkbox-wrapper">
-                            <input type="checkbox" id="age_2" value="2" checked>
-                            <label for="age_2" class="checkbox-label">Entre 25 et 34 ans</label>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age2">Entre 25 et 34 ans</label>
+                                <span class="rating-value" id="age2Value">50%</span>
+                            </div>
+                            <input type="range" id="age2" min="0" max="100" value="50" step="5" class="rating-slider">
                         </div>
-                        <div class="checkbox-wrapper">
-                            <input type="checkbox" id="age_3" value="3">
-                            <label for="age_3" class="checkbox-label">Entre 35 et 49 ans</label>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age3">Entre 35 et 49 ans</label>
+                                <span class="rating-value" id="age3Value">30%</span>
+                            </div>
+                            <input type="range" id="age3" min="0" max="100" value="30" step="5" class="rating-slider">
                         </div>
-                        <div class="checkbox-wrapper">
-                            <input type="checkbox" id="age_4" value="4">
-                            <label for="age_4" class="checkbox-label">50 ans et plus</label>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age4">50 ans et plus</label>
+                                <span class="rating-value" id="age4Value">10%</span>
+                            </div>
+                            <input type="range" id="age4" min="0" max="100" value="10" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-total">
+                            <strong>Total:</strong> <span id="ageTotal">100%</span>
                         </div>
                     </div>
                 </div>
@@ -187,12 +207,12 @@
                     <div class="form-row">
                         <div>
                             <label for="delaiMin">Délai min (secondes)</label>
-                            <input type="number" id="delaiMin" name="delaiMin" min="0" max="300" value="0">
+                            <input type="number" id="delaiMin" name="delaiMin" min="0" max="300" value="2">
                             <small>Délai minimum entre les actions (simule un comportement humain)</small>
                         </div>
                         <div>
                             <label for="delaiMax">Délai max (secondes)</label>
-                            <input type="number" id="delaiMax" name="delaiMax" min="0" max="300" value="0">
+                            <input type="number" id="delaiMax" name="delaiMax" min="0" max="300" value="30">
                             <small>Délai maximum entre les actions (simule un comportement humain)</small>
                         </div>
                     </div>

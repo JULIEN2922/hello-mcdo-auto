@@ -245,6 +245,9 @@ function initialiserFormulaire() {
     
     // Initialiser les sliders de distribution des avis
     initialiserSlidersAvis();
+    
+    // Initialiser les sliders de distribution des âges
+    initialiserSlidersAge();
 }
 
 /**
@@ -260,12 +263,99 @@ function initialiserSlidersAvis() {
         slider.addEventListener('input', (e) => {
             const value = e.target.value;
             valueSpan.textContent = value + '%';
-            mettreAJourTotalAvis();
+            ajusterSlidersAvis(sliderId);
         });
     });
     
     // Mettre à jour le total initial
     mettreAJourTotalAvis();
+}
+
+/**
+ * Initialiser les sliders de distribution des âges
+ */
+function initialiserSlidersAge() {
+    const sliders = ['age1', 'age2', 'age3', 'age4'];
+    
+    sliders.forEach(sliderId => {
+        const slider = document.getElementById(sliderId);
+        const valueSpan = document.getElementById(sliderId + 'Value');
+        
+        slider.addEventListener('input', (e) => {
+            const value = e.target.value;
+            valueSpan.textContent = value + '%';
+            ajusterSlidersAge(sliderId);
+        });
+    });
+    
+    // Mettre à jour le total initial
+    mettreAJourTotalAge();
+}
+
+/**
+ * Ajuster les sliders d'avis pour ne pas dépasser 100%
+ */
+function ajusterSlidersAvis(sliderModifie) {
+    const sliders = ['rating5', 'rating4', 'rating3', 'rating2', 'rating1'];
+    const valeurs = {};
+    let total = 0;
+    
+    // Récupérer toutes les valeurs
+    sliders.forEach(id => {
+        valeurs[id] = parseInt(document.getElementById(id).value);
+        total += valeurs[id];
+    });
+    
+    // Si le total dépasse 100%, réduire proportionnellement les autres sliders
+    if (total > 100) {
+        const excedent = total - 100;
+        const valeursAutres = sliders.filter(id => id !== sliderModifie);
+        const totalAutres = valeursAutres.reduce((sum, id) => sum + valeurs[id], 0);
+        
+        if (totalAutres > 0) {
+            valeursAutres.forEach(id => {
+                const reduction = Math.floor((valeurs[id] / totalAutres) * excedent);
+                const nouvelleValeur = Math.max(0, valeurs[id] - reduction);
+                document.getElementById(id).value = nouvelleValeur;
+                document.getElementById(id + 'Value').textContent = nouvelleValeur + '%';
+            });
+        }
+    }
+    
+    mettreAJourTotalAvis();
+}
+
+/**
+ * Ajuster les sliders d'âge pour ne pas dépasser 100%
+ */
+function ajusterSlidersAge(sliderModifie) {
+    const sliders = ['age1', 'age2', 'age3', 'age4'];
+    const valeurs = {};
+    let total = 0;
+    
+    // Récupérer toutes les valeurs
+    sliders.forEach(id => {
+        valeurs[id] = parseInt(document.getElementById(id).value);
+        total += valeurs[id];
+    });
+    
+    // Si le total dépasse 100%, réduire proportionnellement les autres sliders
+    if (total > 100) {
+        const excedent = total - 100;
+        const valeursAutres = sliders.filter(id => id !== sliderModifie);
+        const totalAutres = valeursAutres.reduce((sum, id) => sum + valeurs[id], 0);
+        
+        if (totalAutres > 0) {
+            valeursAutres.forEach(id => {
+                const reduction = Math.floor((valeurs[id] / totalAutres) * excedent);
+                const nouvelleValeur = Math.max(0, valeurs[id] - reduction);
+                document.getElementById(id).value = nouvelleValeur;
+                document.getElementById(id + 'Value').textContent = nouvelleValeur + '%';
+            });
+        }
+    }
+    
+    mettreAJourTotalAge();
 }
 
 /**
@@ -290,6 +380,26 @@ function mettreAJourTotalAvis() {
     }
 }
 
+/**
+ * Mettre à jour le total des pourcentages d'âge
+ */
+function mettreAJourTotalAge() {
+    const age1 = parseInt(document.getElementById('age1').value);
+    const age2 = parseInt(document.getElementById('age2').value);
+    const age3 = parseInt(document.getElementById('age3').value);
+    const age4 = parseInt(document.getElementById('age4').value);
+    
+    const total = age1 + age2 + age3 + age4;
+    const totalSpan = document.getElementById('ageTotal');
+    
+    totalSpan.textContent = total + '%';
+    
+    if (total === 100) {
+        totalSpan.className = 'valid';
+    } else {
+        totalSpan.className = 'invalid';
+    }
+}
 
 /**
  * Récupérer la configuration du formulaire
@@ -360,12 +470,18 @@ function obtenirConfiguration() {
         1: rating1
     };
     
-    // Collecter les tranches d'âge sélectionnées
-    const agesCheckboxes = document.querySelectorAll('input[id^="age_"]:checked');
-    const agesSelectionnes = Array.from(agesCheckboxes).map(cb => parseInt(cb.value));
+    // Récupérer les pourcentages de distribution des âges
+    const age1 = parseInt(document.getElementById('age1').value);
+    const age2 = parseInt(document.getElementById('age2').value);
+    const age3 = parseInt(document.getElementById('age3').value);
+    const age4 = parseInt(document.getElementById('age4').value);
     
-    // Si aucune sélection, utiliser toutes les tranches (1 à 4)
-    config.ages = agesSelectionnes.length > 0 ? agesSelectionnes : [1, 2, 3, 4];
+    config.distributionAge = {
+        1: age1,  // 15-24 ans
+        2: age2,  // 25-34 ans
+        3: age3,  // 35-49 ans
+        4: age4   // 50 ans et plus
+    };
     
     return config;
 }
@@ -385,7 +501,14 @@ async function previsualiser() {
     // Validation de la distribution des avis
     const totalDistribution = Object.values(config.distributionAvis).reduce((sum, val) => sum + val, 0);
     if (totalDistribution !== 100) {
-        alert(`La somme des pourcentages doit être exactement 100% (actuellement ${totalDistribution}%)`);
+        alert(`La somme des pourcentages d'avis doit être exactement 100% (actuellement ${totalDistribution}%)`);
+        return;
+    }
+    
+    // Validation de la distribution des âges
+    const totalAge = Object.values(config.distributionAge).reduce((sum, val) => sum + val, 0);
+    if (totalAge !== 100) {
+        alert(`La somme des pourcentages d'âge doit être exactement 100% (actuellement ${totalAge}%)`);
         return;
     }
     
@@ -419,7 +542,14 @@ async function previsualiser() {
                         Restaurant: ${s.restaurant} (${s.restaurantId})<br>
                         Lieu: ${s.lieuCommande}<br>
                         Consommation: ${s.typeConsommation}<br>
-                        Récupération: ${s.lieuRecuperation}
+                        Récupération: ${s.lieuRecuperation}`;
+                
+                // Afficher la date d'exécution si disponible
+                if (s.dateExecution && data.utiliserPlageHoraire) {
+                    html += `<br><em>Exécution prévue: ${s.dateExecution}</em>`;
+                }
+                
+                html += `
                     </li>
                 `;
             });
@@ -456,7 +586,14 @@ async function lancerExecution() {
     // Validation de la distribution des avis
     const totalDistribution = Object.values(config.distributionAvis).reduce((sum, val) => sum + val, 0);
     if (totalDistribution !== 100) {
-        alert(`La somme des pourcentages doit être exactement 100% (actuellement ${totalDistribution}%)`);
+        alert(`La somme des pourcentages d'avis doit être exactement 100% (actuellement ${totalDistribution}%)`);
+        return;
+    }
+    
+    // Validation de la distribution des âges
+    const totalAge = Object.values(config.distributionAge).reduce((sum, val) => sum + val, 0);
+    if (totalAge !== 100) {
+        alert(`La somme des pourcentages d'âge doit être exactement 100% (actuellement ${totalAge}%)`);
         return;
     }
     
