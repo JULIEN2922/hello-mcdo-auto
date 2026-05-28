@@ -21,7 +21,7 @@ let timeoutPlanification = null;
 let progressActuel = {
   total: 0,
   termine: 0,
-  enCours: [],
+  enCours: [], // Array d'objets {name, index, description}
   erreurs: [],
   planification: null // Info sur la planification (heure de début, etc.)
 };
@@ -250,6 +250,67 @@ app.post('/api/scenarios/preview', (req, res) => {
     
     const scenarios = genererScenariosAleatoires(req.body);
     
+    console.log('📊 Configuration reçue:', {
+      distributionAvis: req.body.distributionAvis,
+      distributionAge: req.body.distributionAge,
+      nombreScenarios: scenarios.length
+    });
+    
+    // Distribuer les attributs des scénarios
+    const notesDistribuees = req.body.distributionAvis 
+      ? distribuerNotes(scenarios.length, req.body.distributionAvis)
+      : scenarios.map(() => ({ commandeExacte: true, problemeRencontre: false, note: 1 }));
+    
+    const agesDistribues = req.body.distributionAge
+      ? distribuerAges(scenarios.length, req.body.distributionAge)
+      : scenarios.map(() => 2);
+    
+    console.log('📊 Distributions créées:', {
+      notes: notesDistribuees.length,
+      ages: agesDistribues.length,
+      premiereNote: notesDistribuees[0],
+      premierAge: agesDistribues[0]
+    });
+    
+    const commandeExacteDistribuee = distribuerCommandeExacte(
+      scenarios.length, 
+      req.body.pourcentageCommandeExacte !== undefined ? req.body.pourcentageCommandeExacte : 100
+    );
+    
+    const problemesDistribues = distribuerProblemes(
+      scenarios.length,
+      req.body.pourcentageProbleme !== undefined ? req.body.pourcentageProbleme : 0
+    );
+    
+    // Mapper les âges en labels
+    const ageLabels = {
+      1: '15-24 ans',
+      2: '25-34 ans',
+      3: '35-49 ans',
+      4: '50 ans et plus'
+    };
+    
+    // Mapper les notes en étoiles
+    const noteLabels = {
+      1: '⭐⭐⭐⭐⭐ (5/5)',
+      2: '⭐⭐⭐⭐ (4/5)',
+      3: '⭐⭐⭐ (3/5)',
+      4: '⭐⭐ (2/5)',
+      5: '⭐ (1/5)'
+    };
+    
+    // Fonction pour formater les notes détaillées
+    const formaterNotesDetaillees = (notesDetaillees) => {
+      if (!notesDetaillees) return null;
+      return {
+        satisfaction: noteLabels[notesDetaillees.satisfaction],
+        qualite: noteLabels[notesDetaillees.qualite],
+        amabilite: noteLabels[notesDetaillees.amabilite],
+        proprete: noteLabels[notesDetaillees.proprete],
+        rapidite: noteLabels[notesDetaillees.rapidite]
+      };
+    };
+    
     // Calculer les dates/heures théoriques d'exécution
     let dateExecutionTheorique = null;
     
@@ -276,21 +337,28 @@ app.post('/api/scenarios/preview', (req, res) => {
           lieuCommande: s.lieuCommande.label,
           typeConsommation: s.typeConsommation.label,
           lieuRecuperation: s.lieuRecuperation.label,
-          dateExecution: new Date(momentExecution).toLocaleString('fr-FR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          })
+          momentExecution: momentExecution, // Timestamp pour le tri
+          age: ageLabels[agesDistribues[index]] || 'Non défini',
+          note: notesDistribuees[index] && notesDistribuees[index].note ? noteLabels[notesDistribuees[index].note] : 'Non défini',
+          notesDetaillees: notesDistribuees[index] && notesDistribuees[index].notesDetaillees ? formaterNotesDetaillees(notesDistribuees[index].notesDetaillees) : null,
+          commandeExacte: commandeExacteDistribuee[index],
+          problemeRencontre: problemesDistribues[index]
         };
       });
       
-      // Trier par date d'exécution
-      scenariosAvecDates.sort((a, b) => {
-        const dateA = new Date(a.dateExecution.split(' ')[0].split('/').reverse().join('-') + 'T' + a.dateExecution.split(' ')[1]);
-        const dateB = new Date(b.dateExecution.split(' ')[0].split('/').reverse().join('-') + 'T' + b.dateExecution.split(' ')[1]);
-        return dateA - dateB;
+      // Trier par timestamp
+      scenariosAvecDates.sort((a, b) => a.momentExecution - b.momentExecution);
+      
+      // Formater les dates après le tri
+      scenariosAvecDates.forEach(scenario => {
+        scenario.dateExecution = new Date(scenario.momentExecution).toLocaleString('fr-FR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        delete scenario.momentExecution; // Retirer le timestamp de la réponse
       });
       
       res.json({
@@ -302,12 +370,17 @@ app.post('/api/scenarios/preview', (req, res) => {
       // Exécution immédiate
       res.json({
         nombre: scenarios.length,
-        scenarios: scenarios.map(s => ({
+        scenarios: scenarios.map((s, index) => ({
           restaurant: s.restaurant.nom,
           restaurantId: s.restaurant.id,
           lieuCommande: s.lieuCommande.label,
           typeConsommation: s.typeConsommation.label,
-          lieuRecuperation: s.lieuRecuperation.label
+          lieuRecuperation: s.lieuRecuperation.label,
+          age: ageLabels[agesDistribues[index]] || 'Non défini',
+          note: notesDistribuees[index] && notesDistribuees[index].note ? noteLabels[notesDistribuees[index].note] : 'Non défini',
+          notesDetaillees: notesDistribuees[index] && notesDistribuees[index].notesDetaillees ? formaterNotesDetaillees(notesDistribuees[index].notesDetaillees) : null,
+          commandeExacte: commandeExacteDistribuee[index],
+          problemeRencontre: problemesDistribues[index]
         })),
         utiliserPlageHoraire: false
       });
@@ -316,6 +389,29 @@ app.post('/api/scenarios/preview', (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Générer des notes détaillées avec variation autour de la note globale
+ */
+function genererNotesDetaillees(noteGlobale) {
+  // noteGlobale est entre 1 (meilleur) et 5 (pire)
+  const notes = {
+    satisfaction: noteGlobale,
+    qualite: noteGlobale,
+    amabilite: noteGlobale,
+    proprete: noteGlobale,
+    rapidite: noteGlobale
+  };
+  
+  // Ajouter une légère variation aléatoire (+/- 1) pour chaque critère
+  const criteres = ['qualite', 'amabilite', 'proprete', 'rapidite'];
+  criteres.forEach(critere => {
+    const variation = Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : 0; // 30% de chance de varier
+    notes[critere] = Math.max(1, Math.min(5, noteGlobale + variation));
+  });
+  
+  return notes;
+}
 
 /**
  * Distribuer les notes selon les pourcentages définis
@@ -335,9 +431,12 @@ function distribuerNotes(nombreScenarios, distributionAvis) {
   
   // Calculer le nombre de scénarios pour chaque note selon les pourcentages
   for (const [etoiles, pourcentage] of Object.entries(distributionAvis)) {
+    const etoilesNum = parseInt(etoiles); // Convertir en nombre
     const nombre = Math.round((pourcentage / 100) * nombreScenarios);
     for (let i = 0; i < nombre; i++) {
-      notes.push({ ...notesMapping[etoiles] });
+      const noteBase = { ...notesMapping[etoilesNum] };
+      noteBase.notesDetaillees = genererNotesDetaillees(noteBase.note);
+      notes.push(noteBase);
     }
   }
   
@@ -345,8 +444,10 @@ function distribuerNotes(nombreScenarios, distributionAvis) {
   while (notes.length < nombreScenarios) {
     // Ajouter la note la plus fréquente
     const maxPourcentage = Math.max(...Object.values(distributionAvis));
-    const etoilesMax = Object.keys(distributionAvis).find(key => distributionAvis[key] === maxPourcentage);
-    notes.push({ ...notesMapping[etoilesMax] });
+    const etoilesMax = parseInt(Object.keys(distributionAvis).find(key => distributionAvis[key] === maxPourcentage));
+    const noteBase = { ...notesMapping[etoilesMax] };
+    noteBase.notesDetaillees = genererNotesDetaillees(noteBase.note);
+    notes.push(noteBase);
   }
   
   while (notes.length > nombreScenarios) {
@@ -388,6 +489,44 @@ function distribuerAges(nombreScenarios, distributionAge) {
 }
 
 /**
+ * Distribuer les valeurs de commande exacte selon le pourcentage
+ */
+function distribuerCommandeExacte(nombreScenarios, pourcentage) {
+  const valeurs = [];
+  const nombreExactes = Math.round((pourcentage / 100) * nombreScenarios);
+  
+  for (let i = 0; i < nombreExactes; i++) {
+    valeurs.push(true);
+  }
+  
+  for (let i = nombreExactes; i < nombreScenarios; i++) {
+    valeurs.push(false);
+  }
+  
+  // Mélanger pour une distribution aléatoire
+  return valeurs.sort(() => Math.random() - 0.5);
+}
+
+/**
+ * Distribuer les valeurs de problème rencontré selon le pourcentage
+ */
+function distribuerProblemes(nombreScenarios, pourcentage) {
+  const valeurs = [];
+  const nombreProblemes = Math.round((pourcentage / 100) * nombreScenarios);
+  
+  for (let i = 0; i < nombreProblemes; i++) {
+    valeurs.push(true);
+  }
+  
+  for (let i = nombreProblemes; i < nombreScenarios; i++) {
+    valeurs.push(false);
+  }
+  
+  // Mélanger pour une distribution aléatoire
+  return valeurs.sort(() => Math.random() - 0.5);
+}
+
+/**
  * Exécuter les scénarios avec planification dans le temps
  */
 async function executerScenariosAvecPlanification(scenarios, config, planning) {
@@ -414,17 +553,30 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
     ? distribuerAges(scenarios.length, config.distributionAge)
     : scenarios.map(() => 2); // Par défaut: 25-34 ans
   
+  // Distribuer les valeurs de commande exacte et problème
+  const commandeExacteDistribuee = distribuerCommandeExacte(
+    scenarios.length,
+    config.pourcentageCommandeExacte !== undefined ? config.pourcentageCommandeExacte : 100
+  );
+  
+  const problemesDistribues = distribuerProblemes(
+    scenarios.length,
+    config.pourcentageProbleme !== undefined ? config.pourcentageProbleme : 0
+  );
+  
   // Trier les moments d'exécution pour les traiter dans l'ordre chronologique
   const scenariosAvecMoments = scenarios.map((scenario, index) => ({
     scenario,
     momentExecution: momentsExecution[index],
     notePersonnalisee: notesDistribuees[index],
     agePersonnalise: agesDistribues[index],
+    commandeExacte: commandeExacteDistribuee[index],
+    problemeRencontre: problemesDistribues[index],
     index: index + 1
   })).sort((a, b) => a.momentExecution - b.momentExecution);
   
   // Créer les tâches avec délais planifiés aléatoires
-  const tasks = scenariosAvecMoments.map(({ scenario, momentExecution, notePersonnalisee, agePersonnalise, index }) => async () => {
+  const tasks = scenariosAvecMoments.map(({ scenario, momentExecution, notePersonnalisee, agePersonnalise, commandeExacte, problemeRencontre, index }) => async () => {
     const scenarioName = `${scenario.restaurant.id}_${scenario.lieuCommande.id}_${scenario.typeConsommation.id}_${scenario.lieuRecuperation.id}`;
     
     const delaiAvantExecution = momentExecution - Date.now();
@@ -436,7 +588,12 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
       await new Promise(resolve => setTimeout(resolve, delaiAvantExecution));
     }
     
-    progressActuel.enCours.push(scenarioName);
+    progressActuel.enCours.push({
+      name: scenarioName,
+      index: index,
+      description: `${scenario.lieuCommande.label} - ${scenario.typeConsommation.label}`,
+      etape: 'Démarrage...'
+    });
     
     try {
       // Générer une date/heure correspondant au moment d'exécution
@@ -453,6 +610,13 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
       
       console.log(`🔄 Exécution du scénario ${index}/${scenarios.length} à ${dateExecution.toLocaleTimeString('fr-FR')}`);
       
+      // Combiner les notes avec les valeurs de commandeExacte et problemeRencontre
+      const noteFinale = {
+        ...notePersonnalisee,
+        commandeExacte: commandeExacte,
+        problemeRencontre: problemeRencontre
+      };
+      
       const resultat = await remplirScenario(
         scenario.restaurant,
         scenario.lieuCommande,
@@ -462,14 +626,14 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
           headless: config.headless !== false,
           debug: config.debug === true,
           dateHeurePersonnalisee: dateHeure,
-          notesPersonnalisees: notePersonnalisee,
+          notesPersonnalisees: noteFinale,
           age: agePersonnalise,
           delaiMin: config.delaiMin || 0,
           delaiMax: config.delaiMax || 0
         }
       );
       
-      progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
+      progressActuel.enCours = progressActuel.enCours.filter(s => s.name !== scenarioName);
       progressActuel.termine++;
       
       if (!resultat.success) {
@@ -479,7 +643,7 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
       console.log(`✅ Scénario ${index}/${scenarios.length} terminé`);
       return resultat;
     } catch (error) {
-      progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
+      progressActuel.enCours = progressActuel.enCours.filter(s => s.name !== scenarioName);
       progressActuel.termine++;
       progressActuel.erreurs.push({ scenarioName, error: error.message });
       console.error(`❌ Erreur scénario ${index}/${scenarios.length}:`, error.message);

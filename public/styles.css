@@ -236,7 +236,11 @@ header h1 {
 
 .preview-list {
     list-style: none;
-    padding: 0;
+    padding: 10px;
+    max-height: 500px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
 }
 
 .preview-item {

@@ -248,6 +248,9 @@ function initialiserFormulaire() {
     
     // Initialiser les sliders de distribution des âges
     initialiserSlidersAge();
+    
+    // Initialiser les sliders de qualité
+    initialiserSlidersQualite();
 }
 
 /**
@@ -290,6 +293,29 @@ function initialiserSlidersAge() {
     
     // Mettre à jour le total initial
     mettreAJourTotalAge();
+}
+
+/**
+ * Initialiser les sliders de qualité (commande exacte et problème)
+ */
+function initialiserSlidersQualite() {
+    // Slider commande exacte
+    const commandeExacteSlider = document.getElementById('commandeExacte');
+    const commandeExacteValue = document.getElementById('commandeExacteValue');
+    
+    commandeExacteSlider.addEventListener('input', (e) => {
+        const value = e.target.value;
+        commandeExacteValue.textContent = value + '%';
+    });
+    
+    // Slider problème rencontré
+    const problemeSlider = document.getElementById('problemeRencontre');
+    const problemeValue = document.getElementById('problemeRencontreValue');
+    
+    problemeSlider.addEventListener('input', (e) => {
+        const value = e.target.value;
+        problemeValue.textContent = value + '%';
+    });
 }
 
 /**
@@ -443,7 +469,7 @@ function obtenirConfiguration() {
         nombre: parseInt(formData.get('nombre')),
         utiliserPlageHoraire: document.getElementById('utiliserPlageHoraire').checked,
         plageHoraireDateDebut: formData.get('plageHoraireDateDebut'),
-        plageHoraireDebut: formData.get('plageHoraireDebut') || '08:00',
+        plageHoraireHeureDebut: formData.get('plageHoraireDebut') || '08:00',
         plageHoraireDateFin: formData.get('plageHoraireDateFin'),
         plageHoraireFin: formData.get('plageHoraireFin') || '22:00',
         headless: document.getElementById('headless').checked,
@@ -482,6 +508,10 @@ function obtenirConfiguration() {
         3: age3,  // 35-49 ans
         4: age4   // 50 ans et plus
     };
+    
+    // Récupérer les pourcentages de qualité
+    config.pourcentageCommandeExacte = parseInt(document.getElementById('commandeExacte').value);
+    config.pourcentageProbleme = parseInt(document.getElementById('problemeRencontre').value);
     
     return config;
 }
@@ -535,18 +565,40 @@ async function previsualiser() {
         
         if (data.scenarios.length > 0) {
             html += `<ul class="preview-list">`;
-            data.scenarios.slice(0, 10).forEach((s, i) => {
+            data.scenarios.forEach((s, i) => {
                 html += `
                     <li class="preview-item">
-                        <strong>Scénario ${i + 1}</strong>
-                        Restaurant: ${s.restaurant} (${s.restaurantId})<br>
+                        <strong>Scénario ${i + 1}</strong><br>
+                        Restaurant: ${s.restaurantId}<br>
                         Lieu: ${s.lieuCommande}<br>
                         Consommation: ${s.typeConsommation}<br>
-                        Récupération: ${s.lieuRecuperation}`;
+                        Récupération: ${s.lieuRecuperation}<br>
+                        Âge: ${s.age}<br>
+                        <strong>Notes:</strong><br>`;
+                
+                // Afficher les notes détaillées si disponibles
+                if (s.notesDetaillees) {
+                    html += `
+                        <div style="margin-left: 20px; font-size: 0.9em;">
+                            • Satisfaction globale: ${s.notesDetaillees.satisfaction}<br>
+                            • Qualité des produits: ${s.notesDetaillees.qualite}<br>
+                            • Amabilité du personnel: ${s.notesDetaillees.amabilite}<br>
+                            • Propreté du restaurant: ${s.notesDetaillees.proprete}<br>
+                            • Rapidité du service: ${s.notesDetaillees.rapidite}
+                        </div>`;
+                } else {
+                    html += `Note globale: ${s.note}<br>`;
+                }
+                
+                html += `
+                        Commande exacte: ${s.commandeExacte ? 'Oui' : 'Non'}<br>
+                        Problème rencontré: ${s.problemeRencontre ? 'Oui' : 'Non'}`;
                 
                 // Afficher la date d'exécution si disponible
-                if (s.dateExecution && data.utiliserPlageHoraire) {
+                if (data.utiliserPlageHoraire && s.dateExecution) {
                     html += `<br><em>Exécution prévue: ${s.dateExecution}</em>`;
+                } else if (data.utiliserPlageHoraire) {
+                    html += `<br><em>Exécution: Immédiate</em>`;
                 }
                 
                 html += `
@@ -554,10 +606,6 @@ async function previsualiser() {
                 `;
             });
             html += `</ul>`;
-            
-            if (data.scenarios.length > 10) {
-                html += `<p class="alert alert-info">... et ${data.scenarios.length - 10} autre(s) scénario(s)</p>`;
-            }
         }
         
         previewContent.innerHTML = html;
@@ -725,8 +773,30 @@ async function verifierProgress() {
             // Statistiques
             const progressStats = document.getElementById('progressStats');
             if (progressStats) {
+                let scenariosEnCoursHTML = '';
+                if (data.enCours && data.enCours.length > 0) {
+                    scenariosEnCoursHTML = `
+                        <div class="scenarios-en-cours" style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                            <h4 style="margin-bottom: 0.5rem; color: var(--primary-color);">Scénarios en cours d'exécution:</h4>
+                            <ul style="list-style: none; padding-left: 0; margin: 0;">
+                    `;
+                    data.enCours.forEach(scenario => {
+                        scenariosEnCoursHTML += `
+                            <li style="padding: 0.5rem; border-left: 3px solid var(--accent-color); margin-bottom: 0.5rem; background: white;">
+                                <strong>Scénario ${scenario.index}/${data.total}</strong> - ${scenario.description}<br>
+                                <small style="color: #6c757d;">${scenario.etape || 'En cours...'}</small>
+                            </li>
+                        `;
+                    });
+                    scenariosEnCoursHTML += `
+                            </ul>
+                        </div>
+                    `;
+                }
+                
                 progressStats.innerHTML = `
                     ${planificationHTML}
+                    ${scenariosEnCoursHTML}
                     <div class="progress-stats">
                         <div class="stat-box stat-success">
                             <div class="number">${data.termine}</div>

@@ -180,6 +180,42 @@
                     </div>
                 </div>
 
+                <!-- Qualité de commande -->
+                <div class="form-group">
+                    <label>
+                        Commande exacte (%)
+                    </label>
+                    <small>Pourcentage de commandes qui seront marquées comme "exactes" (sans erreur).</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="commandeExacte">Commande exacte</label>
+                                <span class="rating-value" id="commandeExacteValue">100%</span>
+                            </div>
+                            <input type="range" id="commandeExacte" min="0" max="100" value="100" step="5" class="rating-slider">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Problèmes rencontrés -->
+                <div class="form-group">
+                    <label>
+                        Problème rencontré (%)
+                    </label>
+                    <small>Pourcentage de commandes qui auront un problème signalé.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="problemeRencontre">Problème rencontré</label>
+                                <span class="rating-value" id="problemeRencontreValue">0%</span>
+                            </div>
+                            <input type="range" id="problemeRencontre" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Options avancées -->
                 <div class="form-group">
                     <label>
