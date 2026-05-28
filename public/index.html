@@ -9,18 +9,17 @@
 <body>
     <div class="container">
         <header>
-            <h1>🍔 Hello McDo - Automatisation</h1>
-            <p class="subtitle">Configurez et lancez vos scénarios de questionnaires automatiquement</p>
+            <h1>Hello McDo - Automatisation</h1>
+            <p class="subtitle">Configurez et lancez vos scénarios de questionnaires</p>
         </header>
 
         <div class="card">
-            <h2>📊 Configuration des Scénarios</h2>
+            <h2>Configuration</h2>
             
             <form id="configForm">
                 <!-- Nombre de scénarios -->
                 <div class="form-group">
                     <label for="nombre">
-                        <span class="label-icon">🔢</span>
                         Nombre de scénarios à exécuter
                     </label>
                     <input type="number" id="nombre" name="nombre" min="1" value="5" required>
@@ -30,7 +29,6 @@
                 <!-- Plage horaire -->
                 <div class="form-group">
                     <label>
-                        <span class="label-icon">⏰</span>
                         Plage horaire
                     </label>
                     <div class="checkbox-wrapper">
@@ -67,7 +65,6 @@
                 <!-- Restaurant -->
                 <div class="form-group">
                     <label for="numeroRestaurant">
-                        <span class="label-icon">🏪</span>
                         Numéro du restaurant *
                     </label>
                     <input type="text" id="numeroRestaurant" name="numeroRestaurant" placeholder="Ex: 1318, 1234, etc." required>
@@ -77,33 +74,69 @@
                 <!-- Lieux de commande et variantes -->
                 <div class="form-group">
                     <label>
-                        <span class="label-icon">📱</span>
                         Scénarios et variantes
                     </label>
                     <small>Sélectionnez les lieux de commande et leurs variantes spécifiques. Laissez vide pour tout sélectionner aléatoirement.</small>
                     <div id="scenariosTree" class="scenarios-tree"></div>
                 </div>
 
-                <!-- Type d'avis -->
+                <!-- Distribution des avis -->
                 <div class="form-group">
                     <label>
-                        <span class="label-icon">⭐</span>
-                        Type d'avis
+                        Distribution des avis (%)
                     </label>
-                    <select id="typeAvis" name="typeAvis">
-                        <option value="excellent">⭐⭐⭐⭐⭐ Excellent (tout en vert)</option>
-                        <option value="bon">⭐⭐⭐⭐ Bon (4/5)</option>
-                        <option value="moyen">⭐⭐⭐ Moyen (3/5)</option>
-                        <option value="mauvais">⭐⭐ Mauvais (2/5)</option>
-                        <option value="aleatoire">🎲 Aléatoire</option>
-                    </select>
-                    <small>Note de satisfaction à attribuer</small>
+                    <small>Définissez le pourcentage de chaque type d'avis. Total doit être 100%.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating5">Excellent (5/5)</label>
+                                <span class="rating-value" id="rating5Value">70%</span>
+                            </div>
+                            <input type="range" id="rating5" min="0" max="100" value="70" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating4">Bon (4/5)</label>
+                                <span class="rating-value" id="rating4Value">20%</span>
+                            </div>
+                            <input type="range" id="rating4" min="0" max="100" value="20" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating3">Moyen (3/5)</label>
+                                <span class="rating-value" id="rating3Value">10%</span>
+                            </div>
+                            <input type="range" id="rating3" min="0" max="100" value="10" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating2">Mauvais (2/5)</label>
+                                <span class="rating-value" id="rating2Value">0%</span>
+                            </div>
+                            <input type="range" id="rating2" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating1">Très mauvais (1/5)</label>
+                                <span class="rating-value" id="rating1Value">0%</span>
+                            </div>
+                            <input type="range" id="rating1" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-total">
+                            <strong>Total:</strong> <span id="ratingTotal">100%</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Tranche d'âge -->
                 <div class="form-group">
                     <label>
-                        <span class="label-icon">👤</span>
                         Tranches d'âge
                     </label>
                     <small>Sélectionnez les tranches d'âge à utiliser. Laissez vide pour toutes les sélectionner.</small>
@@ -130,7 +163,6 @@
                 <!-- Options avancées -->
                 <div class="form-group">
                     <label>
-                        <span class="label-icon">⚙️</span>
                         Options avancées
                     </label>
                     <div class="checkbox-wrapper">
@@ -169,10 +201,10 @@
                 <!-- Boutons d'action -->
                 <div class="actions">
                     <button type="button" id="previewBtn" class="btn btn-secondary">
-                        👁️ Prévisualiser
+                        Prévisualiser
                     </button>
                     <button type="submit" class="btn btn-primary">
-                        🚀 Lancer l'exécution
+                        Lancer l'exécution
                     </button>
                 </div>
             </form>
@@ -180,13 +212,13 @@
 
         <!-- Prévisualisation -->
         <div id="previewSection" class="card hidden">
-            <h2>👁️ Prévisualisation</h2>
+            <h2>Prévisualisation</h2>
             <div id="previewContent"></div>
         </div>
 
         <!-- Progression -->
         <div id="progressSection" class="card hidden">
-            <h2>📊 Progression</h2>
+            <h2>Progression</h2>
             <div id="progressContent">
                 <div class="progress-bar">
                     <div id="progressBar" class="progress-fill"></div>
@@ -195,7 +227,7 @@
                 <div id="progressErrors"></div>
             </div>
             <button type="button" id="stopBtn" class="btn btn-danger">
-                ⛔ Arrêter l'exécution
+                Arrêter l'exécution
             </button>
         </div>
     </div>

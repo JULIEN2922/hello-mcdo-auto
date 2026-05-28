@@ -113,7 +113,7 @@ function genererVariantesHTML(lieu) {
     if (lieu.options.sur_place) {
         html += `
             <div class="variant-group">
-                <div class="variant-group-title">🍽️ Consommé sur place</div>
+                <div class="variant-group-title">Consommé sur place</div>
                 <div class="variant-options">
                     ${lieu.options.sur_place.recuperation.map(r => `
                         <div class="variant-option">
@@ -134,7 +134,7 @@ function genererVariantesHTML(lieu) {
     if (lieu.options.a_emporter) {
         html += `
             <div class="variant-group">
-                <div class="variant-group-title">📦 Pris à emporter</div>
+                <div class="variant-group-title">Pris à emporter</div>
                 <div class="variant-options">
                     ${lieu.options.a_emporter.recuperation.map(r => `
                         <div class="variant-option">
@@ -242,7 +242,54 @@ function initialiserFormulaire() {
     
     // Arrêt
     stopBtn.addEventListener('click', arreterExecution);
+    
+    // Initialiser les sliders de distribution des avis
+    initialiserSlidersAvis();
 }
+
+/**
+ * Initialiser les sliders de distribution des avis
+ */
+function initialiserSlidersAvis() {
+    const sliders = ['rating5', 'rating4', 'rating3', 'rating2', 'rating1'];
+    
+    sliders.forEach(sliderId => {
+        const slider = document.getElementById(sliderId);
+        const valueSpan = document.getElementById(sliderId + 'Value');
+        
+        slider.addEventListener('input', (e) => {
+            const value = e.target.value;
+            valueSpan.textContent = value + '%';
+            mettreAJourTotalAvis();
+        });
+    });
+    
+    // Mettre à jour le total initial
+    mettreAJourTotalAvis();
+}
+
+/**
+ * Mettre à jour le total des pourcentages d'avis
+ */
+function mettreAJourTotalAvis() {
+    const rating5 = parseInt(document.getElementById('rating5').value);
+    const rating4 = parseInt(document.getElementById('rating4').value);
+    const rating3 = parseInt(document.getElementById('rating3').value);
+    const rating2 = parseInt(document.getElementById('rating2').value);
+    const rating1 = parseInt(document.getElementById('rating1').value);
+    
+    const total = rating5 + rating4 + rating3 + rating2 + rating1;
+    const totalSpan = document.getElementById('ratingTotal');
+    
+    totalSpan.textContent = total + '%';
+    
+    if (total === 100) {
+        totalSpan.className = 'valid';
+    } else {
+        totalSpan.className = 'invalid';
+    }
+}
+
 
 /**
  * Récupérer la configuration du formulaire
@@ -259,11 +306,11 @@ function obtenirConfiguration() {
         const lieu = configuration.scenarios[locationKey];
         const locationCheckbox = document.getElementById(`location_${lieu.id}`);
         
-        // Si le lieu est coché
-        if (locationCheckbox && locationCheckbox.checked) {
-            // Récupérer les variantes cochées pour ce lieu
-            const variantCheckboxes = document.querySelectorAll(`input[data-location="${lieu.id}"]:checked`);
-            
+        // Récupérer les variantes cochées pour ce lieu
+        const variantCheckboxes = document.querySelectorAll(`input[data-location="${lieu.id}"]:checked`);
+        
+        // Si le lieu est coché OU si au moins une variante est cochée
+        if ((locationCheckbox && locationCheckbox.checked) || variantCheckboxes.length > 0) {
             if (variantCheckboxes.length > 0) {
                 const variants = Array.from(variantCheckboxes).map(cb => ({
                     id: cb.value,
@@ -274,6 +321,9 @@ function obtenirConfiguration() {
                 selections[lieu.id] = variants;
             } else if (!lieu.options) {
                 // Pas d'options, donc sélection simple
+                selections[lieu.id] = 'all';
+            } else {
+                // Lieu coché mais aucune variante : utiliser toutes les variantes
                 selections[lieu.id] = 'all';
             }
         }
@@ -295,9 +345,20 @@ function obtenirConfiguration() {
         scenariosSelections: selections
     };
     
-    // Convertir le type d'avis en notes
-    const typeAvis = document.getElementById('typeAvis').value;
-    config.notesPersonnalisees = obtenirNotesParType(typeAvis);
+    // Récupérer les pourcentages de distribution des avis
+    const rating5 = parseInt(document.getElementById('rating5').value);
+    const rating4 = parseInt(document.getElementById('rating4').value);
+    const rating3 = parseInt(document.getElementById('rating3').value);
+    const rating2 = parseInt(document.getElementById('rating2').value);
+    const rating1 = parseInt(document.getElementById('rating1').value);
+    
+    config.distributionAvis = {
+        5: rating5,
+        4: rating4,
+        3: rating3,
+        2: rating2,
+        1: rating1
+    };
     
     // Collecter les tranches d'âge sélectionnées
     const agesCheckboxes = document.querySelectorAll('input[id^="age_"]:checked');
@@ -310,26 +371,6 @@ function obtenirConfiguration() {
 }
 
 /**
- * Obtenir les notes selon le type d'avis
- */
-function obtenirNotesParType(type) {
-    switch (type) {
-        case 'excellent':
-            return { commandeExacte: true, problemeRencontre: false, note: 1 };
-        case 'bon':
-            return { commandeExacte: true, problemeRencontre: false, note: 2 };
-        case 'moyen':
-            return { commandeExacte: true, problemeRencontre: false, note: 3 };
-        case 'mauvais':
-            return { commandeExacte: false, problemeRencontre: true, note: 4 };
-        case 'aleatoire':
-            return 'aleatoire';
-        default:
-            return { commandeExacte: true, problemeRencontre: false, note: 1 };
-    }
-}
-
-/**
  * Prévisualiser les scénarios
  */
 async function previsualiser() {
@@ -337,7 +378,14 @@ async function previsualiser() {
     
     // Validation du numéro de restaurant
     if (!config.numeroRestaurant) {
-        alert('⚠️ Veuillez entrer un numéro de restaurant');
+        alert('Veuillez entrer un numéro de restaurant');
+        return;
+    }
+    
+    // Validation de la distribution des avis
+    const totalDistribution = Object.values(config.distributionAvis).reduce((sum, val) => sum + val, 0);
+    if (totalDistribution !== 100) {
+        alert(`La somme des pourcentages doit être exactement 100% (actuellement ${totalDistribution}%)`);
         return;
     }
     
@@ -358,7 +406,7 @@ async function previsualiser() {
         
         let html = `
             <div class="preview-summary">
-                📊 ${data.nombre} scénario(s) sera/seront exécuté(s)
+                ${data.nombre} scénario(s) sera/seront exécuté(s)
             </div>
         `;
         
@@ -368,10 +416,10 @@ async function previsualiser() {
                 html += `
                     <li class="preview-item">
                         <strong>Scénario ${i + 1}</strong>
-                        🏪 ${s.restaurant} (${s.restaurantId})<br>
-                        📱 ${s.lieuCommande}<br>
-                        🍔 ${s.typeConsommation}<br>
-                        📦 ${s.lieuRecuperation}
+                        Restaurant: ${s.restaurant} (${s.restaurantId})<br>
+                        Lieu: ${s.lieuCommande}<br>
+                        Consommation: ${s.typeConsommation}<br>
+                        Récupération: ${s.lieuRecuperation}
                     </li>
                 `;
             });
@@ -401,7 +449,14 @@ async function lancerExecution() {
     
     // Validation du numéro de restaurant
     if (!config.numeroRestaurant) {
-        alert('⚠️ Veuillez entrer un numéro de restaurant');
+        alert('Veuillez entrer un numéro de restaurant');
+        return;
+    }
+    
+    // Validation de la distribution des avis
+    const totalDistribution = Object.values(config.distributionAvis).reduce((sum, val) => sum + val, 0);
+    if (totalDistribution !== 100) {
+        alert(`La somme des pourcentages doit être exactement 100% (actuellement ${totalDistribution}%)`);
         return;
     }
     
@@ -435,17 +490,17 @@ async function lancerExecution() {
         if (delaiMinutes > 0) {
             messageHTML = `
                 <div class="alert alert-info">
-                    ⏰ L'exécution commencera dans ${delaiMinutes} minute(s)<br>
-                    📊 ${data.nombreScenarios} scénario(s) seront exécutés<br>
-                    🕐 Début prévu: ${new Date(data.debut).toLocaleTimeString('fr-FR', { hour12: false })}<br>
-                    🕐 Fin prévue: ${new Date(data.fin).toLocaleTimeString('fr-FR', { hour12: false })}
+                    L'exécution commencera dans ${delaiMinutes} minute(s)<br>
+                    ${data.nombreScenarios} scénario(s) seront exécutés<br>
+                    Début prévu: ${new Date(data.debut).toLocaleTimeString('fr-FR', { hour12: false })}<br>
+                    Fin prévue: ${new Date(data.fin).toLocaleTimeString('fr-FR', { hour12: false })}
                 </div>
             `;
         } else {
             messageHTML = `
                 <div class="alert alert-success">
-                    🚀 Exécution démarrée!<br>
-                    📊 ${data.nombreScenarios} scénario(s) en cours
+                    Exécution démarrée!<br>
+                    ${data.nombreScenarios} scénario(s) en cours
                 </div>
             `;
         }
@@ -473,6 +528,36 @@ async function verifierProgress() {
         const response = await fetch('/api/progress');
         const data = await response.json();
         
+        // Si planifiée mais pas encore en cours
+        if (data.planifiee && !data.enCours && data.planification) {
+            document.getElementById('progressSection').classList.remove('hidden');
+            
+            const debutDate = new Date(data.planification.debut);
+            const finDate = new Date(data.planification.fin);
+            const maintenant = new Date();
+            const tempsRestant = debutDate - maintenant;
+            const minutesRestantes = Math.max(0, Math.ceil(tempsRestant / 60000));
+            const secondesRestantes = Math.max(0, Math.ceil((tempsRestant % 60000) / 1000));
+            
+            const progressContent = document.getElementById('progressContent');
+            progressContent.innerHTML = `
+                <div class="alert alert-info">
+                    <strong>Exécution planifiée</strong><br>
+                    ${data.total} scénario(s) à exécuter<br>
+                    Temps restant: <strong>${minutesRestantes}min ${secondesRestantes}s</strong><br>
+                    Début prévu: ${debutDate.toLocaleTimeString('fr-FR', { hour12: false })}<br>
+                    Fin prévue: ${finDate.toLocaleTimeString('fr-FR', { hour12: false })}
+                </div>
+                <div class="progress-bar">
+                    <div id="progressBar" class="progress-fill" style="width: 0%">En attente...</div>
+                </div>
+                <div id="progressStats"></div>
+                <div id="progressErrors"></div>
+            `;
+            
+            return;
+        }
+        
         if (data.enCours) {
             // Afficher la progression
             document.getElementById('progressSection').classList.remove('hidden');
@@ -481,58 +566,80 @@ async function verifierProgress() {
             
             // Barre de progression
             const progressBar = document.getElementById('progressBar');
-            progressBar.style.width = pourcentage + '%';
-            progressBar.textContent = pourcentage + '%';
+            if (progressBar) {
+                progressBar.style.width = pourcentage + '%';
+                progressBar.textContent = pourcentage + '%';
+            }
+            
+            // Info de planification si disponible
+            let planificationHTML = '';
+            if (data.planification) {
+                const debutDate = new Date(data.planification.debut);
+                const finDate = new Date(data.planification.fin);
+                planificationHTML = `
+                    <div class="alert alert-info" style="margin-bottom: 1rem;">
+                        Exécution en cours<br>
+                        Début: ${debutDate.toLocaleTimeString('fr-FR', { hour12: false })} | 
+                        Fin prévue: ${finDate.toLocaleTimeString('fr-FR', { hour12: false })}
+                    </div>
+                `;
+            }
             
             // Statistiques
             const progressStats = document.getElementById('progressStats');
-            progressStats.innerHTML = `
-                <div class="progress-stats">
-                    <div class="stat-box stat-success">
-                        <div class="number">${data.termine}</div>
-                        <div class="label">✅ Terminés</div>
+            if (progressStats) {
+                progressStats.innerHTML = `
+                    ${planificationHTML}
+                    <div class="progress-stats">
+                        <div class="stat-box stat-success">
+                            <div class="number">${data.termine}</div>
+                            <div class="label">Terminés</div>
+                        </div>
+                        <div class="stat-box stat-warning">
+                            <div class="number">${data.enCours.length}</div>
+                            <div class="label">En cours</div>
+                        </div>
+                        <div class="stat-box stat-info">
+                            <div class="number">${data.total - data.termine}</div>
+                            <div class="label">Restants</div>
+                        </div>
+                        <div class="stat-box stat-danger">
+                            <div class="number">${data.erreurs.length}</div>
+                            <div class="label">Erreurs</div>
+                        </div>
                     </div>
-                    <div class="stat-box stat-warning">
-                        <div class="number">${data.enCours.length}</div>
-                        <div class="label">⏳ En cours</div>
-                    </div>
-                    <div class="stat-box stat-info">
-                        <div class="number">${data.total - data.termine}</div>
-                        <div class="label">📋 Restants</div>
-                    </div>
-                    <div class="stat-box stat-danger">
-                        <div class="number">${data.erreurs.length}</div>
-                        <div class="label">❌ Erreurs</div>
-                    </div>
-                </div>
-            `;
+                `;
+            }
             
             // Erreurs
             if (data.erreurs.length > 0) {
                 const progressErrors = document.getElementById('progressErrors');
-                progressErrors.innerHTML = `
-                    <div class="error-list">
-                        <h3>⚠️ Erreurs rencontrées</h3>
-                        ${data.erreurs.map(e => `
-                            <div class="error-item">
-                                <strong>${e.scenarioName}</strong>: ${e.error}
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
+                if (progressErrors) {
+                    progressErrors.innerHTML = `
+                        <div class="error-list">
+                            <h3>Erreurs rencontrées</h3>
+                            ${data.erreurs.map(e => `
+                                <div class="error-item">
+                                    <strong>${e.scenarioName}</strong>: ${e.error}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
             }
-        } else if (document.getElementById('progressSection').classList.contains('hidden') === false) {
+        } else if (!data.planifiee && document.getElementById('progressSection').classList.contains('hidden') === false) {
             // Exécution terminée
             const progressStats = document.getElementById('progressStats');
-            if (progressStats.querySelector('.stat-box')) {
-                const totalTermine = parseInt(progressStats.querySelector('.stat-box .number').textContent);
+            if (progressStats && progressStats.querySelector('.stat-box')) {
+                const totalTermine = data.termine || 0;
                 if (totalTermine > 0) {
                     // Afficher le message de fin
                     const progressContent = document.getElementById('progressContent');
                     progressContent.innerHTML = `
                         <div class="alert alert-success">
-                            ✅ Exécution terminée!<br>
-                            📊 Résultats sauvegardés dans le dossier scenarios/
+                            Exécution terminée!<br>
+                            ${totalTermine} scénario(s) traité(s)<br>
+                            ${data.erreurs && data.erreurs.length > 0 ? `${data.erreurs.length} erreur(s)` : ''}
                         </div>
                     ` + progressContent.innerHTML;
                 }
@@ -548,7 +655,7 @@ async function verifierProgress() {
  * Arrêter l'exécution
  */
 async function arreterExecution() {
-    if (!confirm('Êtes-vous sûr de vouloir arrêter l\'exécution en cours ?')) {
+    if (!confirm('Êtes-vous sûr de vouloir arrêter l\'exécution en cours ou annuler la planification ?')) {
         return;
     }
     
@@ -558,7 +665,10 @@ async function arreterExecution() {
         });
         
         if (response.ok) {
-            alert('Arrêt demandé. Les scénarios en cours vont se terminer.');
+            const data = await response.json();
+            alert(data.message);
+            // Rafraîchir l'affichage
+            document.getElementById('progressSection').classList.add('hidden');
         }
         
     } catch (error) {

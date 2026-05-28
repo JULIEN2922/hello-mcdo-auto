@@ -16,11 +16,14 @@ app.use(express.static('public'));
 
 // État de l'exécution
 let executionEnCours = false;
+let executionPlanifiee = false;
+let timeoutPlanification = null;
 let progressActuel = {
   total: 0,
   termine: 0,
   enCours: [],
-  erreurs: []
+  erreurs: [],
+  planification: null // Info sur la planification (heure de début, etc.)
 };
 
 /**
@@ -138,13 +141,15 @@ function genererScenariosAleatoires(config) {
   const parcoursMelanges = combinaisonsParcours.sort(() => Math.random() - 0.5);
   const nombre = Math.min(config.nombre || 1, parcoursMelanges.length * 100);
   
-  // Créer les scénarios
+  // Créer les scénarios en sélectionnant aléatoirement parmi les combinaisons
   const scenarios = [];
   for (let i = 0; i < nombre; i++) {
-    scenarios.push(parcoursMelanges[i % parcoursMelanges.length]);
+    // Sélectionner une combinaison aléatoire pour chaque scénario
+    const indexAleatoire = Math.floor(Math.random() * parcoursMelanges.length);
+    scenarios.push(parcoursMelanges[indexAleatoire]);
   }
   
-  return scenarios.slice(0, nombre);
+  return scenarios;
 }
 
 /**
@@ -260,11 +265,159 @@ app.post('/api/scenarios/preview', (req, res) => {
 });
 
 /**
+ * Distribuer les notes selon les pourcentages définis
+ */
+function distribuerNotes(nombreScenarios, distributionAvis) {
+  // Convertir les pourcentages en valeurs de notes
+  // Note 1 = 5/5 (Excellent), Note 2 = 4/5 (Bon), Note 3 = 3/5 (Moyen), Note 4 = 2/5 (Mauvais), Note 5 = 1/5 (Très mauvais)
+  const notesMapping = {
+    5: { commandeExacte: true, problemeRencontre: false, note: 1 },  // 5 étoiles
+    4: { commandeExacte: true, problemeRencontre: false, note: 2 },  // 4 étoiles
+    3: { commandeExacte: true, problemeRencontre: false, note: 3 },  // 3 étoiles
+    2: { commandeExacte: false, problemeRencontre: true, note: 4 },  // 2 étoiles
+    1: { commandeExacte: false, problemeRencontre: true, note: 5 }   // 1 étoile
+  };
+  
+  const notes = [];
+  
+  // Calculer le nombre de scénarios pour chaque note selon les pourcentages
+  for (const [etoiles, pourcentage] of Object.entries(distributionAvis)) {
+    const nombre = Math.round((pourcentage / 100) * nombreScenarios);
+    for (let i = 0; i < nombre; i++) {
+      notes.push({ ...notesMapping[etoiles] });
+    }
+  }
+  
+  // Ajuster si le total ne correspond pas exactement (à cause des arrondis)
+  while (notes.length < nombreScenarios) {
+    // Ajouter la note la plus fréquente
+    const maxPourcentage = Math.max(...Object.values(distributionAvis));
+    const etoilesMax = Object.keys(distributionAvis).find(key => distributionAvis[key] === maxPourcentage);
+    notes.push({ ...notesMapping[etoilesMax] });
+  }
+  
+  while (notes.length > nombreScenarios) {
+    notes.pop();
+  }
+  
+  // Mélanger les notes pour une distribution aléatoire
+  return notes.sort(() => Math.random() - 0.5);
+}
+
+/**
+ * Exécuter les scénarios avec planification dans le temps
+ */
+async function executerScenariosAvecPlanification(scenarios, config, planning) {
+  console.log('🚀 Début de l\'exécution des scénarios...');
+  
+  const maintenant = Date.now();
+  const tempsDebut = planning.debut.getTime();
+  const tempsFin = planning.fin.getTime();
+  const dureeDisponible = tempsFin - Math.max(tempsDebut, maintenant);
+  
+  // Générer des moments d'exécution aléatoires pour chaque scénario
+  const momentsExecution = scenarios.map(() => {
+    const momentAleatoire = Math.max(tempsDebut, maintenant) + Math.random() * dureeDisponible;
+    return momentAleatoire;
+  });
+  
+  // Distribuer les notes selon les pourcentages définis
+  const notesDistribuees = config.distributionAvis 
+    ? distribuerNotes(scenarios.length, config.distributionAvis)
+    : scenarios.map(() => ({ commandeExacte: true, problemeRencontre: false, note: 1 })); // Par défaut: excellent
+  
+  // Trier les moments d'exécution pour les traiter dans l'ordre chronologique
+  const scenariosAvecMoments = scenarios.map((scenario, index) => ({
+    scenario,
+    momentExecution: momentsExecution[index],
+    notePersonnalisee: notesDistribuees[index],
+    index: index + 1
+  })).sort((a, b) => a.momentExecution - b.momentExecution);
+  
+  // Créer les tâches avec délais planifiés aléatoires
+  const tasks = scenariosAvecMoments.map(({ scenario, momentExecution, notePersonnalisee, index }) => async () => {
+    const scenarioName = `${scenario.restaurant.id}_${scenario.lieuCommande.id}_${scenario.typeConsommation.id}_${scenario.lieuRecuperation.id}`;
+    
+    const delaiAvantExecution = momentExecution - Date.now();
+    
+    // Attendre jusqu'au moment prévu
+    if (delaiAvantExecution > 0) {
+      const dateExecution = new Date(momentExecution);
+      console.log(`⏳ Scénario ${index}/${scenarios.length} planifié pour ${dateExecution.toLocaleTimeString('fr-FR')}`);
+      await new Promise(resolve => setTimeout(resolve, delaiAvantExecution));
+    }
+    
+    progressActuel.enCours.push(scenarioName);
+    
+    try {
+      // Générer une date/heure correspondant au moment d'exécution
+      const dateExecution = new Date(momentExecution);
+      const dateHeure = config.utiliserPlageHoraire ? {
+        date: dateExecution.toLocaleDateString('fr-FR', { 
+          day: '2-digit', 
+          month: '2-digit', 
+          year: 'numeric' 
+        }),
+        hour: String(dateExecution.getHours()).padStart(2, '0'),
+        minute: String(dateExecution.getMinutes()).padStart(2, '0')
+      } : null;
+      
+      // Choisir un âge aléatoire parmi ceux sélectionnés
+      const ages = config.ages || [2]; // Par défaut 25-34 ans
+      const ageAleatoire = ages[Math.floor(Math.random() * ages.length)];
+      
+      console.log(`🔄 Exécution du scénario ${index}/${scenarios.length} à ${dateExecution.toLocaleTimeString('fr-FR')}`);
+      
+      const resultat = await remplirScenario(
+        scenario.restaurant,
+        scenario.lieuCommande,
+        scenario.typeConsommation,
+        scenario.lieuRecuperation,
+        {
+          headless: config.headless !== false,
+          debug: config.debug === true,
+          dateHeurePersonnalisee: dateHeure,
+          notesPersonnalisees: notePersonnalisee,
+          age: ageAleatoire,
+          delaiMin: config.delaiMin || 0,
+          delaiMax: config.delaiMax || 0
+        }
+      );
+      
+      progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
+      progressActuel.termine++;
+      
+      if (!resultat.success) {
+        progressActuel.erreurs.push({ scenarioName, error: resultat.error });
+      }
+      
+      console.log(`✅ Scénario ${index}/${scenarios.length} terminé`);
+      return resultat;
+    } catch (error) {
+      progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
+      progressActuel.termine++;
+      progressActuel.erreurs.push({ scenarioName, error: error.message });
+      console.error(`❌ Erreur scénario ${index}/${scenarios.length}:`, error.message);
+      return { success: false, scenarioName, error: error.message };
+    }
+  });
+  
+  // Exécuter avec concurrence
+  const concurrency = config.concurrence || 1;
+  await executeWithConcurrency(tasks, concurrency);
+  
+  console.log('✅ Exécution terminée!');
+  executionEnCours = false;
+  executionPlanifiee = false;
+  progressActuel.planification = null;
+}
+
+/**
  * POST /api/scenarios/executer - Lancer l'exécution des scénarios
  */
 app.post('/api/scenarios/executer', async (req, res) => {
-  if (executionEnCours) {
-    return res.status(409).json({ error: 'Une exécution est déjà en cours' });
+  if (executionEnCours || executionPlanifiee) {
+    return res.status(409).json({ error: 'Une exécution est déjà en cours ou planifiée' });
   }
   
   try {
@@ -283,90 +436,73 @@ app.post('/api/scenarios/executer', async (req, res) => {
     
     // Calculer la planification
     const planning = planifierExecution(config);
+    const maintenant = Date.now();
     
-    res.json({
-      message: 'Exécution planifiée',
-      nombreScenarios: scenarios.length,
-      debut: planning.debut.toISOString(),
-      fin: planning.fin.toISOString(),
-      delaiDebut: planning.delaiDebut
-    });
-    
-    // Démarrer l'exécution de manière asynchrone
-    executionEnCours = true;
+    // Initialiser le progrès
     progressActuel = {
       total: scenarios.length,
       termine: 0,
       enCours: [],
       erreurs: [],
-      config
+      config,
+      planification: {
+        debut: planning.debut.toISOString(),
+        fin: planning.fin.toISOString(),
+        delaiDebut: planning.delaiDebut,
+        statut: planning.delaiDebut > 0 ? 'EN_ATTENTE' : 'EN_COURS'
+      }
     };
     
-    // Attendre le début de la plage horaire
+    // Si on doit attendre avant de commencer
     if (planning.delaiDebut > 0) {
-      console.log(`⏰ Attente de ${Math.round(planning.delaiDebut / 60000)} minutes avant de commencer...`);
-      await new Promise(resolve => setTimeout(resolve, planning.delaiDebut));
-    }
-    
-    console.log('🚀 Début de l\'exécution des scénarios...');
-    
-    // Créer les tâches
-    const tasks = scenarios.map((scenario, index) => async () => {
-      const scenarioName = `${scenario.restaurant.id}_${scenario.lieuCommande.id}_${scenario.typeConsommation.id}_${scenario.lieuRecuperation.id}`;
-      progressActuel.enCours.push(scenarioName);
+      executionPlanifiee = true;
+      const minutesAttente = Math.round(planning.delaiDebut / 60000);
+      console.log(`⏰ Exécution planifiée dans ${minutesAttente} minute(s) (à ${planning.debut.toLocaleTimeString('fr-FR')})`);
       
-      try {
-        // Générer une date/heure aléatoire dans la plage
-        const dateHeure = config.utiliserPlageHoraire
-          ? genererDateHeureAleatoire(planning.debut, planning.fin)
-          : null;
-        
-        // Choisir un âge aléatoire parmi ceux sélectionnés
-        const ages = config.ages || [2]; // Par défaut 25-34 ans
-        const ageAleatoire = ages[Math.floor(Math.random() * ages.length)];
-        
-        const resultat = await remplirScenario(
-          scenario.restaurant,
-          scenario.lieuCommande,
-          scenario.typeConsommation,
-          scenario.lieuRecuperation,
-          {
-            headless: config.headless !== false,
-            debug: config.debug === true,
-            dateHeurePersonnalisee: dateHeure,
-            notesPersonnalisees: config.notesPersonnalisees,
-            age: ageAleatoire,
-            delaiMin: config.delaiMin || 0,
-            delaiMax: config.delaiMax || 0
-          }
-        );
-        
-        progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
-        progressActuel.termine++;
-        
-        if (!resultat.success) {
-          progressActuel.erreurs.push({ scenarioName, error: resultat.error });
-        }
-        
-        return resultat;
-      } catch (error) {
-        progressActuel.enCours = progressActuel.enCours.filter(s => s !== scenarioName);
-        progressActuel.termine++;
-        progressActuel.erreurs.push({ scenarioName, error: error.message });
-        return { success: false, scenarioName, error: error.message };
-      }
-    });
-    
-    // Exécuter avec concurrence
-    const concurrency = config.concurrence || 1;
-    await executeWithConcurrency(tasks, concurrency);
-    
-    console.log('✅ Exécution terminée!');
-    executionEnCours = false;
+      res.json({
+        message: `Exécution planifiée pour ${planning.debut.toLocaleTimeString('fr-FR')}`,
+        nombreScenarios: scenarios.length,
+        debut: planning.debut.toISOString(),
+        fin: planning.fin.toISOString(),
+        delaiDebut: planning.delaiDebut,
+        minutesAttente,
+        statut: 'EN_ATTENTE'
+      });
+      
+      // Planifier l'exécution
+      timeoutPlanification = setTimeout(async () => {
+        executionPlanifiee = false;
+        executionEnCours = true;
+        progressActuel.planification.statut = 'EN_COURS';
+        await executerScenariosAvecPlanification(scenarios, config, planning);
+      }, planning.delaiDebut);
+      
+    } else {
+      // Exécuter immédiatement
+      executionEnCours = true;
+      
+      res.json({
+        message: 'Exécution démarrée immédiatement',
+        nombreScenarios: scenarios.length,
+        debut: planning.debut.toISOString(),
+        fin: planning.fin.toISOString(),
+        delaiDebut: 0,
+        statut: 'EN_COURS'
+      });
+      
+      // Démarrer l'exécution de manière asynchrone
+      executerScenariosAvecPlanification(scenarios, config, planning).catch(error => {
+        console.error('Erreur lors de l\'exécution:', error);
+        executionEnCours = false;
+        executionPlanifiee = false;
+      });
+    }
     
   } catch (error) {
     executionEnCours = false;
-    console.error('Erreur lors de l\'exécution:', error);
+    executionPlanifiee = false;
+    console.error('Erreur lors de la planification:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -376,6 +512,7 @@ app.post('/api/scenarios/executer', async (req, res) => {
 app.get('/api/progress', (req, res) => {
   res.json({
     enCours: executionEnCours,
+    planifiee: executionPlanifiee,
     ...progressActuel
   });
 });
@@ -384,12 +521,20 @@ app.get('/api/progress', (req, res) => {
  * POST /api/stop - Arrêter l'exécution en cours
  */
 app.post('/api/stop', (req, res) => {
-  if (!executionEnCours) {
-    return res.status(400).json({ error: 'Aucune exécution en cours' });
+  if (!executionEnCours && !executionPlanifiee) {
+    return res.status(400).json({ error: 'Aucune exécution en cours ou planifiée' });
+  }
+  
+  // Annuler la planification si elle existe
+  if (timeoutPlanification) {
+    clearTimeout(timeoutPlanification);
+    timeoutPlanification = null;
   }
   
   executionEnCours = false;
-  res.json({ message: 'Arrêt demandé' });
+  executionPlanifiee = false;
+  
+  res.json({ message: 'Exécution arrêtée / Planification annulée' });
 });
 
 // Route principale
