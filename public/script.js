@@ -777,19 +777,38 @@ async function verifierProgress() {
                 if (data.enCours && data.enCours.length > 0) {
                     scenariosEnCoursHTML = `
                         <div class="scenarios-en-cours" style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                            <h4 style="margin-bottom: 0.5rem; color: var(--primary-color);">Scénarios en cours d'exécution:</h4>
-                            <ul style="list-style: none; padding-left: 0; margin: 0;">
+                            <h4 style="margin-bottom: 0.8rem; color: var(--primary-color);">Scénarios en cours d'exécution:</h4>
+                            <div style="max-height: 400px; overflow-y: auto; padding-right: 0.5rem;">
+                                <ul style="list-style: none; padding-left: 0; margin: 0;">
                     `;
                     data.enCours.forEach(scenario => {
+                        const progressPercent = scenario.progress || 0;
                         scenariosEnCoursHTML += `
-                            <li style="padding: 0.5rem; border-left: 3px solid var(--accent-color); margin-bottom: 0.5rem; background: white;">
-                                <strong>Scénario ${scenario.index}/${data.total}</strong> - ${scenario.description}<br>
-                                <small style="color: #6c757d;">${scenario.etape || 'En cours...'}</small>
+                            <li style="padding: 0.8rem; border-left: 3px solid var(--accent-color); margin-bottom: 0.8rem; background: white; border-radius: 4px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <strong>Scénario ${scenario.index}/${data.total}</strong>
+                                    <span style="font-size: 0.85em; color: #6c757d;">${scenario.dateExecution || ''}</span>
+                                </div>
+                                <div style="font-size: 0.9em; color: #495057; margin-bottom: 0.5rem;">
+                                    <strong>Restaurant:</strong> ${scenario.restaurant}<br>
+                                    <strong>Lieu:</strong> ${scenario.lieuCommande}<br>
+                                    <strong>Consommation:</strong> ${scenario.typeConsommation}<br>
+                                    <strong>Récupération:</strong> ${scenario.lieuRecuperation}
+                                </div>
+                                <div style="margin-bottom: 0.3rem;">
+                                    <div style="background: #e9ecef; border-radius: 10px; height: 20px; overflow: hidden;">
+                                        <div style="background: linear-gradient(90deg, var(--accent-color), #2ecc71); height: 100%; width: ${progressPercent}%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-size: 0.75em; font-weight: bold;">
+                                            ${progressPercent > 15 ? progressPercent + '%' : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                                <small style="color: #6c757d; font-style: italic;">${scenario.etape || 'En cours...'}</small>
                             </li>
                         `;
                     });
                     scenariosEnCoursHTML += `
-                            </ul>
+                                </ul>
+                            </div>
                         </div>
                     `;
                 }

@@ -535,11 +535,12 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
   const maintenant = Date.now();
   const tempsDebut = planning.debut.getTime();
   const tempsFin = planning.fin.getTime();
-  const dureeDisponible = tempsFin - Math.max(tempsDebut, maintenant);
+  const dureeTotale = tempsFin - tempsDebut;
   
-  // Générer des moments d'exécution aléatoires pour chaque scénario
+  // Générer des moments d'exécution aléatoires pour chaque scénario sur TOUTE la plage
+  // Si certains moments sont dans le passé, ils seront exécutés immédiatement
   const momentsExecution = scenarios.map(() => {
-    const momentAleatoire = Math.max(tempsDebut, maintenant) + Math.random() * dureeDisponible;
+    const momentAleatoire = tempsDebut + Math.random() * dureeTotale;
     return momentAleatoire;
   });
   
@@ -581,18 +582,26 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
     
     const delaiAvantExecution = momentExecution - Date.now();
     
-    // Attendre jusqu'au moment prévu
+    // Attendre jusqu'au moment prévu (sauf si c'est dans le passé)
     if (delaiAvantExecution > 0) {
       const dateExecution = new Date(momentExecution);
       console.log(`⏳ Scénario ${index}/${scenarios.length} planifié pour ${dateExecution.toLocaleTimeString('fr-FR')}`);
       await new Promise(resolve => setTimeout(resolve, delaiAvantExecution));
+    } else {
+      const dateExecution = new Date(momentExecution);
+      console.log(`⚡ Scénario ${index}/${scenarios.length} (prévu pour ${dateExecution.toLocaleTimeString('fr-FR')}) - Exécution immédiate (heure passée)`);
     }
     
     progressActuel.enCours.push({
       name: scenarioName,
       index: index,
-      description: `${scenario.lieuCommande.label} - ${scenario.typeConsommation.label}`,
-      etape: 'Démarrage...'
+      restaurant: scenario.restaurant.id,
+      lieuCommande: scenario.lieuCommande.label,
+      typeConsommation: scenario.typeConsommation.label,
+      lieuRecuperation: scenario.lieuRecuperation.label,
+      dateExecution: new Date(momentExecution).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      etape: 'Démarrage du navigateur...',
+      progress: 0
     });
     
     try {
@@ -610,12 +619,25 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
       
       console.log(`🔄 Exécution du scénario ${index}/${scenarios.length} à ${dateExecution.toLocaleTimeString('fr-FR')}`);
       
+      // Mettre à jour l'étape
+      const scenarioEnCours = progressActuel.enCours.find(s => s.name === scenarioName);
+      if (scenarioEnCours) {
+        scenarioEnCours.etape = 'Navigation vers le formulaire...';
+        scenarioEnCours.progress = 20;
+      }
+      
       // Combiner les notes avec les valeurs de commandeExacte et problemeRencontre
       const noteFinale = {
         ...notePersonnalisee,
         commandeExacte: commandeExacte,
         problemeRencontre: problemeRencontre
       };
+      
+      // Mettre à jour avant le remplissage
+      if (scenarioEnCours) {
+        scenarioEnCours.etape = 'Remplissage du questionnaire...';
+        scenarioEnCours.progress = 40;
+      }
       
       const resultat = await remplirScenario(
         scenario.restaurant,
@@ -632,6 +654,12 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
           delaiMax: config.delaiMax || 0
         }
       );
+      
+      // Mettre à jour après le remplissage
+      if (scenarioEnCours) {
+        scenarioEnCours.etape = 'Finalisation...';
+        scenarioEnCours.progress = 90;
+      }
       
       progressActuel.enCours = progressActuel.enCours.filter(s => s.name !== scenarioName);
       progressActuel.termine++;
