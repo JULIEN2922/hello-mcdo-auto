@@ -5,10 +5,93 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const sqlite3 = require('sqlite3').verbose();
 const { remplirScenario, SCENARIOS, RESTAURANTS_PARIS } = require('./auto-hello-mcdo-advanced');
 
 const app = express();
 const PORT = 3000;
+
+// Initialiser la base de données
+const db = new sqlite3.Database('./logs.db', (err) => {
+  if (err) {
+    console.error('Erreur lors de l\'ouverture de la base de données:', err);
+  } else {
+    console.log('✅ Base de données connectée');
+    initDatabase();
+  }
+});
+
+// Créer les tables si elles n'existent pas
+function initDatabase() {
+  db.run(`CREATE TABLE IF NOT EXISTS scenario_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date_execution DATETIME DEFAULT CURRENT_TIMESTAMP,
+    restaurant_id TEXT,
+    lieu_commande TEXT,
+    type_consommation TEXT,
+    lieu_recuperation TEXT,
+    age TEXT,
+    note INTEGER,
+    notes_detaillees TEXT,
+    commande_exacte BOOLEAN,
+    probleme_rencontre BOOLEAN,
+    success BOOLEAN,
+    error TEXT,
+    duree_ms INTEGER,
+    date_prevue TEXT
+  )`, (err) => {
+    if (err) {
+      console.error('Erreur lors de la création de la table:', err);
+    } else {
+      console.log('✅ Table scenario_logs prête');
+    }
+  });
+}
+
+// Fonction pour logger un scénario
+function logScenario(scenarioData) {
+  const {
+    restaurant,
+    lieuCommande,
+    typeConsommation,
+    lieuRecuperation,
+    age,
+    note,
+    notesDetaillees,
+    commandeExacte,
+    problemeRencontre,
+    success,
+    error,
+    duree,
+    datePrevue
+  } = scenarioData;
+
+  const sql = `INSERT INTO scenario_logs (
+    restaurant_id, lieu_commande, type_consommation, lieu_recuperation,
+    age, note, notes_detaillees, commande_exacte, probleme_rencontre,
+    success, error, duree_ms, date_prevue
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+  db.run(sql, [
+    restaurant,
+    lieuCommande,
+    typeConsommation,
+    lieuRecuperation,
+    age,
+    note,
+    JSON.stringify(notesDetaillees),
+    commandeExacte ? 1 : 0,
+    problemeRencontre ? 1 : 0,
+    success ? 1 : 0,
+    error || null,
+    duree || null,
+    datePrevue || null
+  ], (err) => {
+    if (err) {
+      console.error('Erreur lors de l\'enregistrement du log:', err);
+    }
+  });
+}
 
 // Middleware
 app.use(express.json());
@@ -181,27 +264,59 @@ async function executeWithConcurrency(tasks, concurrency) {
  */
 function planifierExecution(config) {
   const maintenant = new Date();
-  const [heureDebut, minuteDebut] = config.plageHoraireHeureDebut.split(':').map(Number);
-  const [heureFin, minuteFin] = config.plageHoraireFin.split(':').map(Number);
   
-  // Utiliser les dates fournies ou la date actuelle par défaut
-  const dateDebut = config.plageHoraireDateDebut || maintenant.toISOString().split('T')[0];
-  const dateFin = config.plageHoraireDateFin || maintenant.toISOString().split('T')[0];
+  // Mode immédiat : pas de planification
+  if (config.modePlanification === 'immediate') {
+    return {
+      mode: 'immediate',
+      debut: maintenant,
+      fin: maintenant,
+      delaiDebut: 0,
+      dureeDisponible: 0
+    };
+  }
   
-  const debut = new Date(dateDebut);
-  debut.setHours(heureDebut, minuteDebut, 0, 0);
+  // Mode simple : une seule plage horaire
+  if (config.modePlanification === 'simple') {
+    const [heureDebut, minuteDebut] = config.plageHoraireHeureDebut.split(':').map(Number);
+    const [heureFin, minuteFin] = config.plageHoraireFin.split(':').map(Number);
+    
+    const dateDebut = config.plageHoraireDateDebut || maintenant.toISOString().split('T')[0];
+    const dateFin = config.plageHoraireDateFin || maintenant.toISOString().split('T')[0];
+    
+    const debut = new Date(dateDebut);
+    debut.setHours(heureDebut, minuteDebut, 0, 0);
+    
+    const fin = new Date(dateFin);
+    fin.setHours(heureFin, minuteFin, 0, 0);
+    
+    const delaiDebut = Math.max(0, debut.getTime() - maintenant.getTime());
+    
+    return {
+      mode: 'simple',
+      debut,
+      fin,
+      delaiDebut,
+      dureeDisponible: fin.getTime() - Math.max(debut.getTime(), maintenant.getTime())
+    };
+  }
   
-  const fin = new Date(dateFin);
-  fin.setHours(heureFin, minuteFin, 0, 0);
+  // Mode avancé : plusieurs tranches horaires
+  if (config.modePlanification === 'avancee' && config.tranches) {
+    return {
+      mode: 'avancee',
+      tranches: config.tranches,
+      delaiDebut: 0
+    };
+  }
   
-  // Calculer le délai avant le début
-  const delaiDebut = Math.max(0, debut.getTime() - maintenant.getTime());
-  
+  // Par défaut : mode immédiat
   return {
-    debut,
-    fin,
-    delaiDebut,
-    dureeDisponible: fin.getTime() - Math.max(debut.getTime(), maintenant.getTime())
+    mode: 'immediate',
+    debut: maintenant,
+    fin: maintenant,
+    delaiDebut: 0,
+    dureeDisponible: 0
   };
 }
 
@@ -225,6 +340,62 @@ function genererDateHeureAleatoire(debut, fin) {
     hour,
     minute
   };
+}
+
+/**
+ * Générer des moments d'exécution pour le mode avancé (plusieurs tranches)
+ * Distribue aléatoirement les scénarios sur les différents jours et tranches horaires de la semaine
+ */
+function genererMomentsExecutionAvancee(nombreScenarios, tranches) {
+  const maintenant = new Date();
+  const moments = [];
+  
+  // Construire tous les créneaux disponibles pour la semaine à venir
+  const creneaux = [];
+  
+  // Pour chaque tranche horaire définie
+  tranches.forEach(tranche => {
+    const [heureDebut, minuteDebut] = tranche.heureDebut.split(':').map(Number);
+    const [heureFin, minuteFin] = tranche.heureFin.split(':').map(Number);
+    
+    // Pour les 7 prochains jours
+    for (let jourOffset = 0; jourOffset < 7; jourOffset++) {
+      const jourCible = new Date(maintenant);
+      jourCible.setDate(maintenant.getDate() + jourOffset);
+      const jourSemaine = jourCible.getDay(); // 0 = Dimanche, 1 = Lundi, etc.
+      
+      // Vérifier si ce jour est sélectionné dans la tranche
+      if (tranche.jours.includes(jourSemaine)) {
+        const debut = new Date(jourCible);
+        debut.setHours(heureDebut, minuteDebut, 0, 0);
+        
+        const fin = new Date(jourCible);
+        fin.setHours(heureFin, minuteFin, 0, 0);
+        
+        creneaux.push({ debut, fin });
+      }
+    }
+  });
+  
+  if (creneaux.length === 0) {
+    console.warn('⚠️  Aucun créneau disponible, exécution immédiate');
+    return Array(nombreScenarios).fill(maintenant.getTime());
+  }
+  
+  // Distribuer aléatoirement les scénarios sur les créneaux
+  for (let i = 0; i < nombreScenarios; i++) {
+    // Choisir un créneau aléatoire
+    const creneau = creneaux[Math.floor(Math.random() * creneaux.length)];
+    
+    // Générer un moment aléatoire dans ce créneau
+    const timestampDebut = creneau.debut.getTime();
+    const timestampFin = creneau.fin.getTime();
+    const momentAleatoire = timestampDebut + Math.random() * (timestampFin - timestampDebut);
+    
+    moments.push(momentAleatoire);
+  }
+  
+  return moments;
 }
 
 // Routes API
@@ -311,80 +482,73 @@ app.post('/api/scenarios/preview', (req, res) => {
       };
     };
     
-    // Calculer les dates/heures théoriques d'exécution
-    let dateExecutionTheorique = null;
+    // Préparer la planification selon le mode
+    const planning = planifierExecution(req.body);
+    let momentsExecution;
     
-    if (req.body.utiliserPlageHoraire) {
-      // Extraire la plage horaire
-      const dateDebut = new Date(`${req.body.plageHoraireDateDebut}T${req.body.plageHoraireHeureDebut}:00`);
-      const dateFin = new Date(`${req.body.plageHoraireDateFin}T${req.body.plageHoraireFin}:00`);
+    if (planning.mode === 'immediate') {
+      // Mode immédiat : exécution immédiate
+      momentsExecution = scenarios.map(() => Date.now());
+    } else if (planning.mode === 'simple') {
+      // Mode simple : distribution sur une seule plage horaire
+      const tempsDebut = planning.debut.getTime();
+      const tempsFin = planning.fin.getTime();
+      const dureeTotale = tempsFin - tempsDebut;
       
-      const maintenant = Date.now();
-      const tempsDebut = dateDebut.getTime();
-      const tempsFin = dateFin.getTime();
-      const dureetotale = tempsFin - tempsDebut;
-      
-      // Calculer les moments théoriques pour chaque scénario
-      const scenariosAvecDates = scenarios.map((s, index) => {
-        // Distribution aléatoire dans la plage
-        const momentAleatoire = Math.random();
-        const delaiDepuisDebut = dureetotale * momentAleatoire;
-        const momentExecution = tempsDebut + delaiDepuisDebut;
-        
-        return {
-          restaurant: s.restaurant.nom,
-          restaurantId: s.restaurant.id,
-          lieuCommande: s.lieuCommande.label,
-          typeConsommation: s.typeConsommation.label,
-          lieuRecuperation: s.lieuRecuperation.label,
-          momentExecution: momentExecution, // Timestamp pour le tri
-          age: ageLabels[agesDistribues[index]] || 'Non défini',
-          note: notesDistribuees[index] && notesDistribuees[index].note ? noteLabels[notesDistribuees[index].note] : 'Non défini',
-          notesDetaillees: notesDistribuees[index] && notesDistribuees[index].notesDetaillees ? formaterNotesDetaillees(notesDistribuees[index].notesDetaillees) : null,
-          commandeExacte: commandeExacteDistribuee[index],
-          problemeRencontre: problemesDistribues[index]
-        };
+      momentsExecution = scenarios.map(() => {
+        return tempsDebut + Math.random() * dureeTotale;
       });
+    } else if (planning.mode === 'avancee') {
+      // Mode avancé : distribution sur plusieurs tranches
+      momentsExecution = genererMomentsExecutionAvancee(scenarios.length, planning.tranches);
+    } else {
+      momentsExecution = scenarios.map(() => Date.now());
+    }
+    
+    // Construire les scénarios avec leurs dates d'exécution
+    const scenariosAvecDates = scenarios.map((s, index) => {
+      const momentExecution = momentsExecution[index];
       
-      // Trier par timestamp
-      scenariosAvecDates.sort((a, b) => a.momentExecution - b.momentExecution);
-      
-      // Formater les dates après le tri
-      scenariosAvecDates.forEach(scenario => {
+      return {
+        restaurant: s.restaurant.nom,
+        restaurantId: s.restaurant.id,
+        lieuCommande: s.lieuCommande.label,
+        typeConsommation: s.typeConsommation.label,
+        lieuRecuperation: s.lieuRecuperation.label,
+        momentExecution: momentExecution, // Timestamp pour le tri
+        age: ageLabels[agesDistribues[index]] || 'Non défini',
+        note: notesDistribuees[index] && notesDistribuees[index].note ? noteLabels[notesDistribuees[index].note] : 'Non défini',
+        notesDetaillees: notesDistribuees[index] && notesDistribuees[index].notesDetaillees ? formaterNotesDetaillees(notesDistribuees[index].notesDetaillees) : null,
+        commandeExacte: commandeExacteDistribuee[index],
+        problemeRencontre: problemesDistribues[index]
+      };
+    });
+    
+    // Trier par timestamp
+    scenariosAvecDates.sort((a, b) => a.momentExecution - b.momentExecution);
+    
+    // Formater les dates après le tri
+    scenariosAvecDates.forEach(scenario => {
+      if (planning.mode === 'immediate') {
+        scenario.dateExecution = 'Immédiat';
+      } else {
         scenario.dateExecution = new Date(scenario.momentExecution).toLocaleString('fr-FR', {
+          weekday: 'short',
           day: '2-digit',
           month: '2-digit',
           year: 'numeric',
           hour: '2-digit',
           minute: '2-digit'
         });
-        delete scenario.momentExecution; // Retirer le timestamp de la réponse
-      });
-      
-      res.json({
-        nombre: scenarios.length,
-        scenarios: scenariosAvecDates,
-        utiliserPlageHoraire: true
-      });
-    } else {
-      // Exécution immédiate
-      res.json({
-        nombre: scenarios.length,
-        scenarios: scenarios.map((s, index) => ({
-          restaurant: s.restaurant.nom,
-          restaurantId: s.restaurant.id,
-          lieuCommande: s.lieuCommande.label,
-          typeConsommation: s.typeConsommation.label,
-          lieuRecuperation: s.lieuRecuperation.label,
-          age: ageLabels[agesDistribues[index]] || 'Non défini',
-          note: notesDistribuees[index] && notesDistribuees[index].note ? noteLabels[notesDistribuees[index].note] : 'Non défini',
-          notesDetaillees: notesDistribuees[index] && notesDistribuees[index].notesDetaillees ? formaterNotesDetaillees(notesDistribuees[index].notesDetaillees) : null,
-          commandeExacte: commandeExacteDistribuee[index],
-          problemeRencontre: problemesDistribues[index]
-        })),
-        utiliserPlageHoraire: false
-      });
-    }
+      }
+      delete scenario.momentExecution; // Retirer le timestamp de la réponse
+    });
+    
+    res.json({
+      nombre: scenarios.length,
+      scenarios: scenariosAvecDates,
+      modePlanification: planning.mode
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -533,16 +697,33 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
   console.log('🚀 Début de l\'exécution des scénarios...');
   
   const maintenant = Date.now();
-  const tempsDebut = planning.debut.getTime();
-  const tempsFin = planning.fin.getTime();
-  const dureeTotale = tempsFin - tempsDebut;
+  let momentsExecution;
   
-  // Générer des moments d'exécution aléatoires pour chaque scénario sur TOUTE la plage
-  // Si certains moments sont dans le passé, ils seront exécutés immédiatement
-  const momentsExecution = scenarios.map(() => {
-    const momentAleatoire = tempsDebut + Math.random() * dureeTotale;
-    return momentAleatoire;
-  });
+  // Générer les moments d'exécution selon le mode de planification
+  if (planning.mode === 'immediate') {
+    // Mode immédiat : tous les scénarios s'exécutent immédiatement
+    momentsExecution = scenarios.map(() => maintenant);
+    console.log('⚡ Mode immédiat : exécution de tous les scénarios maintenant');
+  } else if (planning.mode === 'simple') {
+    // Mode simple : distribution aléatoire sur une seule plage horaire
+    const tempsDebut = planning.debut.getTime();
+    const tempsFin = planning.fin.getTime();
+    const dureeTotale = tempsFin - tempsDebut;
+    
+    momentsExecution = scenarios.map(() => {
+      const momentAleatoire = tempsDebut + Math.random() * dureeTotale;
+      return momentAleatoire;
+    });
+    
+    console.log(`📅 Mode simple : distribution sur la plage ${planning.debut.toLocaleString('fr-FR')} - ${planning.fin.toLocaleString('fr-FR')}`);
+  } else if (planning.mode === 'avancee') {
+    // Mode avancé : distribution aléatoire sur plusieurs tranches horaires
+    momentsExecution = genererMomentsExecutionAvancee(scenarios.length, planning.tranches);
+    console.log(`📅 Mode avancé : distribution sur ${planning.tranches.length} tranche(s) horaire(s)`);
+  } else {
+    // Par défaut : exécution immédiate
+    momentsExecution = scenarios.map(() => maintenant);
+  }
   
   // Distribuer les notes selon les pourcentages définis
   const notesDistribuees = config.distributionAvis 
@@ -607,7 +788,7 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
     try {
       // Générer une date/heure correspondant au moment d'exécution
       const dateExecution = new Date(momentExecution);
-      const dateHeure = config.utiliserPlageHoraire ? {
+      const dateHeure = (config.modePlanification && config.modePlanification !== 'immediate') ? {
         date: dateExecution.toLocaleDateString('fr-FR', { 
           day: '2-digit', 
           month: '2-digit', 
@@ -668,12 +849,47 @@ async function executerScenariosAvecPlanification(scenarios, config, planning) {
         progressActuel.erreurs.push({ scenarioName, error: resultat.error });
       }
       
+      // Logger le scénario dans la base de données
+      logScenario({
+        restaurant: scenario.restaurant.id,
+        lieuCommande: scenario.lieuCommande.label,
+        typeConsommation: scenario.typeConsommation.label,
+        lieuRecuperation: scenario.lieuRecuperation.label,
+        age: agePersonnalise,
+        note: notePersonnalisee.note,
+        notesDetaillees: notePersonnalisee.notesDetaillees,
+        commandeExacte: commandeExacte,
+        problemeRencontre: problemeRencontre,
+        success: resultat.success,
+        error: resultat.error,
+        duree: resultat.duree,
+        datePrevue: new Date(momentExecution).toLocaleString('fr-FR')
+      });
+      
       console.log(`✅ Scénario ${index}/${scenarios.length} terminé`);
       return resultat;
     } catch (error) {
       progressActuel.enCours = progressActuel.enCours.filter(s => s.name !== scenarioName);
       progressActuel.termine++;
       progressActuel.erreurs.push({ scenarioName, error: error.message });
+      
+      // Logger l'erreur dans la base de données
+      logScenario({
+        restaurant: scenario.restaurant.id,
+        lieuCommande: scenario.lieuCommande.label,
+        typeConsommation: scenario.typeConsommation.label,
+        lieuRecuperation: scenario.lieuRecuperation.label,
+        age: agePersonnalise,
+        note: notePersonnalisee.note,
+        notesDetaillees: notePersonnalisee.notesDetaillees,
+        commandeExacte: commandeExacte,
+        problemeRencontre: problemeRencontre,
+        success: false,
+        error: error.message,
+        duree: null,
+        datePrevue: new Date(momentExecution).toLocaleString('fr-FR')
+      });
+      
       console.error(`❌ Erreur scénario ${index}/${scenarios.length}:`, error.message);
       return { success: false, scenarioName, error: error.message };
     }
@@ -791,6 +1007,121 @@ app.get('/api/progress', (req, res) => {
     enCours: executionEnCours,
     planifiee: executionPlanifiee,
     ...progressActuel
+  });
+});
+
+/**
+ * GET /api/logs - Récupérer l'historique des scénarios exécutés
+ */
+app.get('/api/logs', (req, res) => {
+  const limit = parseInt(req.query.limit) || 100;
+  const offset = parseInt(req.query.offset) || 0;
+  const success = req.query.success;
+  const restaurant = req.query.restaurant;
+  const dateDebut = req.query.dateDebut;
+  const dateFin = req.query.dateFin;
+  
+  let sql = 'SELECT * FROM scenario_logs WHERE 1=1';
+  const params = [];
+  
+  // Filtres
+  if (success !== undefined) {
+    sql += ' AND success = ?';
+    params.push(success === 'true' ? 1 : 0);
+  }
+  
+  if (restaurant) {
+    sql += ' AND restaurant_id = ?';
+    params.push(restaurant);
+  }
+  
+  if (dateDebut) {
+    sql += ' AND date_execution >= ?';
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += ' AND date_execution <= ?';
+    params.push(dateFin);
+  }
+  
+  sql += ' ORDER BY date_execution DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  
+  db.all(sql, params, (err, rows) => {
+    if (err) {
+      console.error('Erreur lors de la récupération des logs:', err);
+      return res.status(500).json({ error: 'Erreur lors de la récupération des logs' });
+    }
+    
+    // Compter le total
+    let countSql = 'SELECT COUNT(*) as total FROM scenario_logs WHERE 1=1';
+    const countParams = [];
+    
+    if (success !== undefined) {
+      countSql += ' AND success = ?';
+      countParams.push(success === 'true' ? 1 : 0);
+    }
+    
+    if (restaurant) {
+      countSql += ' AND restaurant_id = ?';
+      countParams.push(restaurant);
+    }
+    
+    if (dateDebut) {
+      countSql += ' AND date_execution >= ?';
+      countParams.push(dateDebut);
+    }
+    
+    if (dateFin) {
+      countSql += ' AND date_execution <= ?';
+      countParams.push(dateFin);
+    }
+    
+    db.get(countSql, countParams, (err, count) => {
+      if (err) {
+        console.error('Erreur lors du comptage des logs:', err);
+        return res.json({ logs: rows, total: rows.length });
+      }
+      
+      // Parser les notes détaillées
+      const logsFormattes = rows.map(log => ({
+        ...log,
+        notes_detaillees: log.notes_detaillees ? JSON.parse(log.notes_detaillees) : null
+      }));
+      
+      res.json({
+        logs: logsFormattes,
+        total: count.total,
+        limit,
+        offset
+      });
+    });
+  });
+});
+
+/**
+ * GET /api/logs/stats - Récupérer les statistiques des exécutions
+ */
+app.get('/api/logs/stats', (req, res) => {
+  const sql = `
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as reussis,
+      SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as echecs,
+      AVG(duree_ms) as duree_moyenne,
+      MIN(date_execution) as premiere_execution,
+      MAX(date_execution) as derniere_execution
+    FROM scenario_logs
+  `;
+  
+  db.get(sql, [], (err, stats) => {
+    if (err) {
+      console.error('Erreur lors de la récupération des statistiques:', err);
+      return res.status(500).json({ error: 'Erreur lors de la récupération des statistiques' });
+    }
+    
+    res.json(stats);
   });
 });
 

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello McDo - Automatisation</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .theme-toggle:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+    </style>
+    <script src="theme.js"></script>
+</head>
+<body>
+    <button id="toggleTheme" class="theme-toggle" title="Changer de thème">🌙</button>
+    
+    <div class="container">
+        <header style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1>Hello McDo - Automatisation</h1>
+                <p class="subtitle">Configurez et lancez vos scénarios de questionnaires</p>
+            </div>
+            <a href="logs.html" class="btn btn-secondary" style="align-self: flex-start;">
+                📊 Voir l'historique
+            </a>
+        </header>
+
+        <div class="card">
+            <h2>Configuration</h2>
+            
+            <form id="configForm">
+                <!-- Nombre de scénarios -->
+                <div class="form-group">
+                    <label for="nombre">
+                        Nombre de scénarios à exécuter
+                    </label>
+                    <input type="number" id="nombre" name="nombre" min="1" value="5" required>
+                    <small>Nombre de questionnaires à remplir</small>
+                </div>
+
+                <!-- Plage horaire -->
+                <div class="form-group">
+                    <label>
+                        Mode de planification
+                    </label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="modePlanification" value="immediate" checked>
+                            <span>Exécution immédiate</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="modePlanification" value="simple">
+                            <span>Planification simple (une plage horaire)</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="modePlanification" value="avancee">
+                            <span>Planification avancée (plusieurs jours/tranches)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Planification simple -->
+                <div id="planificationSimple" class="hidden planification-section">
+                    <div class="time-range">
+                        <div>
+                            <label for="plageHoraireDateDebut">Date de début</label>
+                            <input type="date" id="plageHoraireDateDebut" name="plageHoraireDateDebut">
+                        </div>
+                        <div>
+                            <label for="plageHoraireDebut">Heure de début</label>
+                            <input type="time" id="plageHoraireDebut" name="plageHoraireDebut" value="08:00">
+                        </div>
+                    </div>
+                    <div class="time-range">
+                        <div>
+                            <label for="plageHoraireDateFin">Date de fin</label>
+                            <input type="date" id="plageHoraireDateFin" name="plageHoraireDateFin">
+                        </div>
+                        <div>
+                            <label for="plageHoraireFin">Heure de fin</label>
+                            <input type="time" id="plageHoraireFin" name="plageHoraireFin" value="22:00">
+                        </div>
+                    </div>
+                    <small>Les scénarios seront répartis aléatoirement dans cette plage</small>
+                </div>
+
+                <!-- Planification avancée -->
+                <div id="planificationAvancee" class="hidden planification-section">
+                    <div class="advanced-planning">
+                        <label>
+                            Sélectionnez les jours et tranches horaires
+                        </label>
+                        <small>Les scénarios seront répartis aléatoirement sur les tranches sélectionnées</small>
+                        
+                        <div id="joursTranches" class="jours-tranches">
+                            <!-- Sera généré dynamiquement par JavaScript -->
+                        </div>
+                        
+                        <button type="button" id="ajouterTranche" class="btn-secondary">
+                            + Ajouter une tranche horaire
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Restaurant -->
+                <div class="form-group">
+                    <label for="numeroRestaurant">
+                        Numéro du restaurant *
+                    </label>
+                    <input type="text" id="numeroRestaurant" name="numeroRestaurant" placeholder="Ex: 1318, 1234, etc." required>
+                    <small>Entrez le numéro du restaurant McDonald's (obligatoire)</small>
+                </div>
+
+                <!-- Lieux de commande et variantes -->
+                <div class="form-group">
+                    <label>
+                        Scénarios et variantes
+                    </label>
+                    <small>Sélectionnez les lieux de commande et leurs variantes spécifiques. Laissez vide pour tout sélectionner aléatoirement.</small>
+                    <div id="scenariosTree" class="scenarios-tree"></div>
+                </div>
+
+                <!-- Distribution des avis -->
+                <div class="form-group">
+                    <label>
+                        Distribution des avis (%)
+                    </label>
+                    <small>Définissez le pourcentage de chaque type d'avis. Total doit être 100%.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating5">Excellent (5/5)</label>
+                                <span class="rating-value" id="rating5Value">70%</span>
+                            </div>
+                            <input type="range" id="rating5" min="0" max="100" value="70" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating4">Bon (4/5)</label>
+                                <span class="rating-value" id="rating4Value">20%</span>
+                            </div>
+                            <input type="range" id="rating4" min="0" max="100" value="20" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating3">Moyen (3/5)</label>
+                                <span class="rating-value" id="rating3Value">10%</span>
+                            </div>
+                            <input type="range" id="rating3" min="0" max="100" value="10" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating2">Mauvais (2/5)</label>
+                                <span class="rating-value" id="rating2Value">0%</span>
+                            </div>
+                            <input type="range" id="rating2" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="rating1">Très mauvais (1/5)</label>
+                                <span class="rating-value" id="rating1Value">0%</span>
+                            </div>
+                            <input type="range" id="rating1" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-total">
+                            <strong>Total:</strong> <span id="ratingTotal">100%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Distribution des tranches d'âge -->
+                <div class="form-group">
+                    <label>
+                        Distribution des tranches d'âge (%)
+                    </label>
+                    <small>Définissez le pourcentage de chaque tranche d'âge. Total doit être 100%.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age1">Entre 15 et 24 ans</label>
+                                <span class="rating-value" id="age1Value">10%</span>
+                            </div>
+                            <input type="range" id="age1" min="0" max="100" value="10" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age2">Entre 25 et 34 ans</label>
+                                <span class="rating-value" id="age2Value">50%</span>
+                            </div>
+                            <input type="range" id="age2" min="0" max="100" value="50" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age3">Entre 35 et 49 ans</label>
+                                <span class="rating-value" id="age3Value">30%</span>
+                            </div>
+                            <input type="range" id="age3" min="0" max="100" value="30" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="age4">50 ans et plus</label>
+                                <span class="rating-value" id="age4Value">10%</span>
+                            </div>
+                            <input type="range" id="age4" min="0" max="100" value="10" step="5" class="rating-slider">
+                        </div>
+                        
+                        <div class="rating-total">
+                            <strong>Total:</strong> <span id="ageTotal">100%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Qualité de commande -->
+                <div class="form-group">
+                    <label>
+                        Commande exacte (%)
+                    </label>
+                    <small>Pourcentage de commandes qui seront marquées comme "exactes" (sans erreur).</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="commandeExacte">Commande exacte</label>
+                                <span class="rating-value" id="commandeExacteValue">100%</span>
+                            </div>
+                            <input type="range" id="commandeExacte" min="0" max="100" value="100" step="5" class="rating-slider">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Problèmes rencontrés -->
+                <div class="form-group">
+                    <label>
+                        Problème rencontré (%)
+                    </label>
+                    <small>Pourcentage de commandes qui auront un problème signalé.</small>
+                    
+                    <div class="rating-distribution">
+                        <div class="rating-item">
+                            <div class="rating-header">
+                                <label for="problemeRencontre">Problème rencontré</label>
+                                <span class="rating-value" id="problemeRencontreValue">0%</span>
+                            </div>
+                            <input type="range" id="problemeRencontre" min="0" max="100" value="0" step="5" class="rating-slider">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Options avancées -->
+                <div class="form-group">
+                    <label>
+                        Options avancées
+                    </label>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="headless" name="headless" checked>
+                        <label for="headless" class="checkbox-label">
+                            Mode headless (sans interface graphique - plus rapide)
+                        </label>
+                    </div>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="debug" name="debug">
+                        <label for="debug" class="checkbox-label">
+                            Mode debug (captures d'écran à chaque étape)
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="concurrence">Concurrence</label>
+                            <input type="number" id="concurrence" name="concurrence" min="1" max="20" value="1">
+                            <small>Nombre de scénarios en parallèle</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="delaiMin">Délai min (secondes)</label>
+                            <input type="number" id="delaiMin" name="delaiMin" min="0" max="300" value="2">
+                            <small>Délai minimum entre les actions (simule un comportement humain)</small>
+                        </div>
+                        <div>
+                            <label for="delaiMax">Délai max (secondes)</label>
+                            <input type="number" id="delaiMax" name="delaiMax" min="0" max="300" value="30">
+                            <small>Délai maximum entre les actions (simule un comportement humain)</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Boutons d'action -->
+                <div class="actions">
+                    <button type="button" id="previewBtn" class="btn btn-secondary">
+                        Prévisualiser
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        Lancer l'exécution
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Prévisualisation -->
+        <div id="previewSection" class="card hidden">
+            <h2>Prévisualisation</h2>
+            <div id="previewContent"></div>
+        </div>
+
+        <!-- Progression -->
+        <div id="progressSection" class="card hidden">
+            <h2>Progression</h2>
+            <div id="progressContent">
+                <div class="progress-bar">
+                    <div id="progressBar" class="progress-fill"></div>
+                </div>
+                <div id="progressStats"></div>
+                <div id="progressErrors"></div>
+            </div>
+            <button type="button" id="stopBtn" class="btn btn-danger">
+                Arrêter l'exécution
+            </button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

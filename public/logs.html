@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historique - Hello McDo</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="layout.css">
+    <script src="theme.js"></script>
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-left: 4px solid var(--accent-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--text-dark);
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: var(--text-light);
+            margin-top: 0.5rem;
+        }
+        
+        .filters {
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .logs-table {
+            width: 100%;
+            background: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .logs-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .logs-table thead {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .logs-table th,
+        .logs-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .logs-table tbody tr:hover {
+            background: var(--hover-bg);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 2rem;
+        }
+        
+        .pagination button {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--accent-color);
+            background: var(--card-bg);
+            color: var(--accent-color);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .pagination button:hover:not(:disabled) {
+            background: var(--accent-color);
+            color: white;
+        }
+        
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pagination button.active {
+            background: var(--accent-color);
+            color: white;
+        }
+        
+        .notes-details {
+            font-size: 0.85rem;
+            color: var(--text-light);
+            margin-top: 0.25rem;
+        }
+        
+        .logs-container {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="/" class="sidebar-logo">
+                    <span>🍔</span>
+                    <span>McDo Auto</span>
+                </a>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Menu</div>
+                    <ul class="sidebar-menu">
+                        <li class="sidebar-item">
+                            <a href="/" class="sidebar-link">
+                                <span class="sidebar-icon">⚙️</span>
+                                <span>Configuration</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-item">
+                            <a href="logs.html" class="sidebar-link active">
+                                <span class="sidebar-icon">📊</span>
+                                <span>Historique</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-item">
+                            <a href="/" class="sidebar-link">
+                                <span class="sidebar-icon">⏳</span>
+                                <span>Progression</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="theme-switcher" id="toggleTheme">
+                    <span class="theme-switcher-label">Mode sombre</span>
+                    <span class="theme-switcher-icon">🌙</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="topbar">
+                <h1 class="topbar-title">Historique des scénarios</h1>
+                <div class="topbar-actions">
+                    <button class="btn btn-secondary" onclick="reinitialiserFiltres()">
+                        🔄 Réinitialiser
+                    </button>
+                    <button class="btn btn-primary" onclick="appliquerFiltres()">
+                        🔍 Appliquer les filtres
+                    </button>
+                </div>
+            </div>
+            
+            <div class="content-area">
+                <!-- Statistiques -->
+                <div class="portainer-card">
+                    <div class="portainer-card-header">
+                        <h3 class="portainer-card-title">
+                            <span>📈</span> Statistiques
+                        </h3>
+                    </div>
+                    <div class="portainer-card-body">
+                        <div class="stats-grid" id="statsGrid">
+                            <div class="stat-card">
+                                <div class="stat-value" id="statTotal">-</div>
+                                <div class="stat-label">Total exécuté</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="statReussis" style="color: #28a745;">-</div>
+                                <div class="stat-label">Réussis</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="statEchecs" style="color: #dc3545;">-</div>
+                                <div class="stat-label">Échecs</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="statDureeMoyenne">-</div>
+                                <div class="stat-label">Durée moyenne</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Filtres -->
+                <div class="portainer-card">
+                    <div class="portainer-card-header">
+                        <h3 class="portainer-card-title">
+                            <span>🔍</span> Filtres
+                        </h3>
+                    </div>
+                    <div class="portainer-card-body">
+                        <div class="filter-row">
+                            <div class="form-group">
+                                <label>Statut</label>
+                                <select id="filterSuccess" class="form-control">
+                                    <option value="">Tous</option>
+                                    <option value="true">Réussis uniquement</option>
+                                    <option value="false">Échecs uniquement</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Restaurant</label>
+                                <input type="text" id="filterRestaurant" class="form-control" placeholder="ex: 1318">
+                            </div>
+                            <div class="form-group">
+                                <label>Date début</label>
+                                <input type="datetime-local" id="filterDateDebut" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label>Date fin</label>
+                                <input type="datetime-local" id="filterDateFin" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Table des logs -->
+                <div class="portainer-card">
+                    <div class="portainer-card-header">
+                        <h3 class="portainer-card-title">
+                            <span>📋</span> Logs d'exécution
+                        </h3>
+                    </div>
+                    <div class="portainer-card-body">
+                        <div class="logs-table">
+                            <div class="logs-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Restaurant</th>
+                                            <th>Parcours</th>
+                                            <th>Âge</th>
+                                            <th>Note</th>
+                                            <th>Statut</th>
+                                            <th>Durée</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="logsTableBody">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; padding: 2rem;">Chargement...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Pagination -->
+                        <div class="pagination" id="pagination">
+                            <button id="btnPrev" onclick="changerPage(-1)">Précédent</button>
+                            <span id="pageInfo">Page 1</span>
+                            <button id="btnNext" onclick="changerPage(1)">Suivant</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="logs.js"></script>
+</body>
+</html>

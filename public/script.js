@@ -214,22 +214,14 @@ function initialiserFormulaire() {
     const form = document.getElementById('configForm');
     const previewBtn = document.getElementById('previewBtn');
     const stopBtn = document.getElementById('stopBtn');
-    const plageHoraireCheckbox = document.getElementById('utiliserPlageHoraire');
-    const plageHoraireInputs = document.getElementById('plageHoraireInputs');
     
     // Initialiser les dates avec la date actuelle
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('plageHoraireDateDebut').value = today;
     document.getElementById('plageHoraireDateFin').value = today;
     
-    // Toggle plage horaire
-    plageHoraireCheckbox.addEventListener('change', (e) => {
-        if (e.target.checked) {
-            plageHoraireInputs.classList.remove('hidden');
-        } else {
-            plageHoraireInputs.classList.add('hidden');
-        }
-    });
+    // Initialiser le mode de planification
+    initialiserModePlanification();
     
     // Prévisualisation
     previewBtn.addEventListener('click', previsualiser);
@@ -251,6 +243,137 @@ function initialiserFormulaire() {
     
     // Initialiser les sliders de qualité
     initialiserSlidersQualite();
+}
+
+/**
+ * Initialiser le mode de planification
+ */
+function initialiserModePlanification() {
+    const radioButtons = document.querySelectorAll('input[name="modePlanification"]');
+    const planificationSimple = document.getElementById('planificationSimple');
+    const planificationAvancee = document.getElementById('planificationAvancee');
+    const ajouterTrancheBtn = document.getElementById('ajouterTranche');
+    
+    // Gérer le changement de mode
+    radioButtons.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            
+            // Cacher toutes les sections
+            planificationSimple.classList.add('hidden');
+            planificationAvancee.classList.add('hidden');
+            
+            // Afficher la section appropriée
+            if (mode === 'simple') {
+                planificationSimple.classList.remove('hidden');
+            } else if (mode === 'avancee') {
+                planificationAvancee.classList.remove('hidden');
+            }
+        });
+    });
+    
+    // Bouton d'ajout de tranche
+    ajouterTrancheBtn.addEventListener('click', ajouterTranche);
+    
+    // Ajouter une tranche par défaut
+    ajouterTranche();
+}
+
+/**
+ * Ajouter une nouvelle tranche horaire
+ */
+let trancheCounter = 0;
+function ajouterTranche() {
+    const container = document.getElementById('joursTranches');
+    const trancheId = 'tranche_' + (++trancheCounter);
+    
+    const trancheHtml = `
+        <div class="tranche-item" id="${trancheId}">
+            <div class="tranche-header">
+                <h4>Tranche horaire ${trancheCounter}</h4>
+                ${trancheCounter > 1 ? `<button type="button" class="btn-remove-tranche" onclick="supprimerTranche('${trancheId}')">× Supprimer</button>` : ''}
+            </div>
+            
+            <div class="jours-semaine">
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="1"> Lun
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="2"> Mar
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="3"> Mer
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="4"> Jeu
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="5"> Ven
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="6"> Sam
+                </label>
+                <label class="jour-checkbox">
+                    <input type="checkbox" name="${trancheId}_jour" value="0"> Dim
+                </label>
+            </div>
+            
+            <div class="tranche-heures">
+                <div>
+                    <label>Heure de début</label>
+                    <input type="time" name="${trancheId}_debut" value="08:00" required>
+                </div>
+                <div>
+                    <label>Heure de fin</label>
+                    <input type="time" name="${trancheId}_fin" value="22:00" required>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', trancheHtml);
+}
+
+/**
+ * Supprimer une tranche horaire
+ */
+function supprimerTranche(trancheId) {
+    const tranche = document.getElementById(trancheId);
+    if (tranche) {
+        tranche.remove();
+    }
+}
+
+/**
+ * Collecter les tranches horaires configurées
+ */
+function collecterTranches() {
+    const container = document.getElementById('joursTranches');
+    const tranches = [];
+    
+    container.querySelectorAll('.tranche-item').forEach(trancheItem => {
+        const trancheId = trancheItem.id;
+        
+        // Collecter les jours sélectionnés
+        const jours = [];
+        trancheItem.querySelectorAll(`input[name="${trancheId}_jour"]:checked`).forEach(checkbox => {
+            jours.push(parseInt(checkbox.value));
+        });
+        
+        // Collecter les heures
+        const heureDebut = trancheItem.querySelector(`input[name="${trancheId}_debut"]`).value;
+        const heureFin = trancheItem.querySelector(`input[name="${trancheId}_fin"]`).value;
+        
+        if (jours.length > 0) {
+            tranches.push({
+                jours: jours,
+                heureDebut: heureDebut,
+                heureFin: heureFin
+            });
+        }
+    });
+    
+    return tranches;
 }
 
 /**
@@ -465,13 +588,12 @@ function obtenirConfiguration() {
         }
     });
     
+    // Déterminer le mode de planification
+    const modePlanification = document.querySelector('input[name="modePlanification"]:checked').value;
+    
     const config = {
         nombre: parseInt(formData.get('nombre')),
-        utiliserPlageHoraire: document.getElementById('utiliserPlageHoraire').checked,
-        plageHoraireDateDebut: formData.get('plageHoraireDateDebut'),
-        plageHoraireHeureDebut: formData.get('plageHoraireDebut') || '08:00',
-        plageHoraireDateFin: formData.get('plageHoraireDateFin'),
-        plageHoraireFin: formData.get('plageHoraireFin') || '22:00',
+        modePlanification: modePlanification,
         headless: document.getElementById('headless').checked,
         debug: document.getElementById('debug').checked,
         concurrence: parseInt(formData.get('concurrence')) || 1,
@@ -480,6 +602,16 @@ function obtenirConfiguration() {
         numeroRestaurant: formData.get('numeroRestaurant')?.trim() || '',
         scenariosSelections: selections
     };
+    
+    // Ajouter les paramètres selon le mode de planification
+    if (modePlanification === 'simple') {
+        config.plageHoraireDateDebut = formData.get('plageHoraireDateDebut');
+        config.plageHoraireHeureDebut = formData.get('plageHoraireDebut') || '08:00';
+        config.plageHoraireDateFin = formData.get('plageHoraireDateFin');
+        config.plageHoraireFin = formData.get('plageHoraireFin') || '22:00';
+    } else if (modePlanification === 'avancee') {
+        config.tranches = collecterTranches();
+    }
     
     // Récupérer les pourcentages de distribution des avis
     const rating5 = parseInt(document.getElementById('rating5').value);
