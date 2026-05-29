@@ -181,7 +181,7 @@ async function executeWithConcurrency(tasks, concurrency) {
  */
 function planifierExecution(config) {
   const maintenant = new Date();
-  const [heureDebut, minuteDebut] = config.plageHoraireDebut.split(':').map(Number);
+  const [heureDebut, minuteDebut] = config.plageHoraireHeureDebut.split(':').map(Number);
   const [heureFin, minuteFin] = config.plageHoraireFin.split(':').map(Number);
   
   // Utiliser les dates fournies ou la date actuelle par défaut
