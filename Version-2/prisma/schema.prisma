@@ -1,0 +1,183 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  role      String   @default("USER") // "ADMIN" or "USER"
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  restaurantAccess RestaurantAccess[]
+  logs            ScenarioLog[]
+  configChanges   ConfigChangeLog[]
+  
+  @@map("users")
+}
+
+model Restaurant {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g., "1318"
+  name        String
+  address     String?
+  city        String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  userAccess  RestaurantAccess[]
+  plannings   Planning[]
+  logs        ScenarioLog[]
+  config      RestaurantConfig?
+  
+  @@map("restaurants")
+}
+
+model RestaurantAccess {
+  id           String     @id @default(uuid())
+  userId       String
+  restaurantId String
+  canView      Boolean    @default(true)   // Can view logs and plannings
+  canConfigure Boolean    @default(false)  // Can modify configuration
+  createdAt    DateTime   @default(now())
+  
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, restaurantId])
+  @@map("restaurant_access")
+}
+
+model Planning {
+  id            String      @id @default(uuid())
+  restaurantId  String
+  dayOfWeek     String      // "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+  startTime     String      // Format: "09:00"
+  endTime       String      // Format: "18:00"
+  minScenarios  Int         // Minimum number of scenarios (e.g., 45)
+  maxScenarios  Int         // Maximum number of scenarios (e.g., 55)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  restaurant    Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  @@map("plannings")
+}
+
+model ScenarioLog {
+  id                  String            @id @default(uuid())
+  restaurantId        String
+  userId              String?
+  
+  // Scenario details
+  location            String            // "BORNE", "COMPTOIR", "DRIVE", "GUICHET", "MCCAFE", "CLICK_COLLECT", "LIVRAISON", "TABLETTE", "APP_MOBILE"
+  consumptionType     String            // "SUR_PLACE", "A_EMPORTER", "DRIVE"
+  pickupLocation      String            // "COMPTOIR", "MCDRIVE", "TABLE", "MCCAFE"
+  age                 String?
+  
+  // Results
+  rating              Int?              // 1-5
+  detailedNotes       String?           // JSON
+  exactOrder          Boolean?
+  problemEncountered  Boolean?
+  
+  // Execution
+  success             Boolean           @default(false)
+  error               String?
+  durationMs          Int?
+  scheduledDate       DateTime?
+  executedAt          DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  
+  restaurant          Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  user                User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@map("scenario_logs")
+}
+
+model ScenarioRule {
+  id                  String   @id @default(uuid())
+  name                String
+  description         String?
+  
+  // Rule configuration (JSON)
+  // Example: { "allowedLocations": ["BORNE", "COMPTOIR"], "requiredAge": "18-25" }
+  config              String
+  
+  active              Boolean  @default(true)
+  priority            Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@map("scenario_rules")
+}
+
+model RestaurantConfig {
+  id                  String   @id @default(uuid())
+  restaurantId        String   @unique
+  
+  // Rating Distribution (percentages, must sum to 100)
+  rating1Percent      Int      @default(0)   // 1 star
+  rating2Percent      Int      @default(0)   // 2 stars
+  rating3Percent      Int      @default(10)  // 3 stars
+  rating4Percent      Int      @default(20)  // 4 stars
+  rating5Percent      Int      @default(70)  // 5 stars
+  
+  // Age Distribution (percentages, must sum to 100)
+  age15_24Percent     Int      @default(10)  // 15-24 years
+  age25_34Percent     Int      @default(50)  // 25-34 years
+  age35_49Percent     Int      @default(30)  // 35-49 years
+  age50PlusPercent    Int      @default(10)  // 50+ years
+  
+  // Scenario Types (JSON array of enabled scenarios)
+  // Example: ["BORNE", "COMPTOIR", "DRIVE", "MCCAFE", "CLICK_COLLECT", "LIVRAISON", "APP_MOBILE"]
+  enabledScenarios    String   @default("[\"BORNE\",\"COMPTOIR\",\"DRIVE\"]")
+  
+  // Scenario Variants (JSON object with variants per scenario)
+  // Example: {"BORNE": {"consumptionTypes": ["SUR_PLACE", "A_EMPORTER"], "pickupLocations": ["COMPTOIR", "TABLE"]}}
+  scenarioVariants    String   @default("{}")
+  
+  // Order Quality
+  exactOrderPercent          Int      @default(100) // Percentage of exact orders
+  problemEncounteredPercent  Int      @default(0)   // Percentage of orders with problems
+  
+  // Execution Parameters
+  concurrency                Int      @default(1)   // Number of scenarios to run in parallel (1-20)
+  delayMinSeconds            Int      @default(2)   // Minimum delay between actions (seconds)
+  delayMaxSeconds            Int      @default(30)  // Maximum delay between actions (seconds)
+  headless                   Boolean  @default(true) // Run browser in headless mode
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  restaurant          Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  @@map("restaurant_configs")
+}
+
+model ConfigChangeLog {
+  id            String   @id @default(uuid())
+  restaurantId  String
+  userId        String
+  changes       String   // JSON string of changes
+  createdAt     DateTime @default(now())
+  
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("config_change_logs")
+}

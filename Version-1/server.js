@@ -939,8 +939,8 @@ app.post('/api/scenarios/executer', async (req, res) => {
       erreurs: [],
       config,
       planification: {
-        debut: planning.debut.toISOString(),
-        fin: planning.fin.toISOString(),
+        debut: planning.debut ? planning.debut.toISOString() : null,
+        fin: planning.fin ? planning.fin.toISOString() : null,
         delaiDebut: planning.delaiDebut,
         statut: planning.delaiDebut > 0 ? 'EN_ATTENTE' : 'EN_COURS'
       }
@@ -955,8 +955,8 @@ app.post('/api/scenarios/executer', async (req, res) => {
       res.json({
         message: `Exécution planifiée pour ${planning.debut.toLocaleTimeString('fr-FR')}`,
         nombreScenarios: scenarios.length,
-        debut: planning.debut.toISOString(),
-        fin: planning.fin.toISOString(),
+        debut: planning.debut ? planning.debut.toISOString() : null,
+        fin: planning.fin ? planning.fin.toISOString() : null,
         delaiDebut: planning.delaiDebut,
         minutesAttente,
         statut: 'EN_ATTENTE'
@@ -977,8 +977,8 @@ app.post('/api/scenarios/executer', async (req, res) => {
       res.json({
         message: 'Exécution démarrée immédiatement',
         nombreScenarios: scenarios.length,
-        debut: planning.debut.toISOString(),
-        fin: planning.fin.toISOString(),
+        debut: planning.debut ? planning.debut.toISOString() : null,
+        fin: planning.fin ? planning.fin.toISOString() : null,
         delaiDebut: 0,
         statut: 'EN_COURS'
       });
