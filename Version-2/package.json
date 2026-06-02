@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",
+    "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.0.2",
     "axios": "^1.7.2",
     "bcryptjs": "^2.4.3",
