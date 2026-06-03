@@ -94,7 +94,9 @@ export function ExecutionStatusCard({ restaurantId }: Props) {
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Restaurant:</span>
-                <span className="font-medium">{status.restaurantId?.slice(0, 8)}...</span>
+                <span className="font-medium">
+                  {status.restaurant ? `${status.restaurant.name} (#${status.restaurant.code})` : status.restaurantId?.slice(0, 8) + '...'}
+                </span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Démarré:</span>

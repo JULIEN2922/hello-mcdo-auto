@@ -31,12 +31,41 @@ Application de gestion des scénarios Hello McDo avec authentification, gestion 
 - ✅ Plages horaires (début/fin)
 - ✅ Nombre de scénarios min/max (exemple: 45-55)
 - ✅ Sauvegarde en masse
+- ✅ Vue calendrier Google Agenda
+- ✅ Indicateur de temps réel
+- ✅ Dialogues popup pour création/édition
+
+### Exécution des Scénarios
+- ✅ Exécution automatique selon les plannings
+- ✅ Exécution manuelle à la demande
+- ✅ Concurrence configurable (1-20 scénarios simultanés)
+- ✅ Délais aléatoires entre scénarios (configurable)
+- ✅ Automation Puppeteer complète
+- ✅ **Intégration Tor** : IPs françaises différentes par scénario
+- ✅ Monitoring en temps réel (refresh toutes les 5s)
 
 ### Logs & Statistiques
 - ✅ Historique de tous les scénarios exécutés
 - ✅ Filtres (restaurant, date, statut)
 - ✅ Statistiques (taux de succès, durée moyenne)
 - ✅ Pagination
+
+### 🔐 Tor Integration (Nouveau !)
+
+**Exécutez les scénarios avec des IPs françaises différentes** :
+- Binaires Tor inclus via npm (pas d'installation manuelle)
+- Démarrage automatique au premier lancement
+- Renouvellement d'IP entre chaque scénario
+- Configuration `ExitNodes {fr}` pour IPs françaises uniquement
+- Aucune configuration requise
+
+**Activation** :
+1. Aller dans Configuration du restaurant
+2. Cocher "Utiliser Tor (IPs françaises différentes...)"
+3. Sauvegarder
+4. Les scénarios utiliseront automatiquement Tor
+
+Pour plus de détails : [TOR_INTEGRATION.md](TOR_INTEGRATION.md)
 
 ## 📦 Installation
 

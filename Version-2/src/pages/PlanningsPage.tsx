@@ -291,9 +291,15 @@ export function PlanningsPage() {
     if (!confirm('Confirmer la suppression ?')) return;
     
     try {
+      // Save scroll position
+      const scrollY = window.scrollY;
+      
       await planningApi.delete(editingPlanning.id);
       setDialogOpen(false);
-      loadPlannings();
+      await loadPlannings();
+      
+      // Restore scroll position after re-render
+      setTimeout(() => window.scrollTo(0, scrollY), 0);
     } catch (error: any) {
       alert(error.response?.data?.error || 'Erreur lors de la suppression');
     }

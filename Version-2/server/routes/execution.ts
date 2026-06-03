@@ -21,9 +21,22 @@ router.get('/status', async (_req: AuthRequest, res, next) => {
   try {
     const state = getExecutionState();
     
+    // Get restaurant details if execution is running
+    let restaurant = null;
+    if (state.restaurantId) {
+      restaurant = await prisma.restaurant.findUnique({
+        where: { id: state.restaurantId },
+        select: { code: true, name: true }
+      });
+    }
+    
     res.json({
       isRunning: state.isRunning,
       restaurantId: state.restaurantId,
+      restaurant: restaurant ? {
+        code: restaurant.code,
+        name: restaurant.name
+      } : undefined,
       startedAt: state.startedAt,
       totalScenarios: state.totalScenarios,
       completed: state.completed,

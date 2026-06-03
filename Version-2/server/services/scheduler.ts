@@ -143,6 +143,9 @@ async function executePlanning(planning: any): Promise<void> {
           success: result.success,
           error: result.error,
           durationMs: result.durationMs,
+          usedTor: result.usedTor,
+          ipAddress: result.ipAddress,
+          ipCountry: result.ipCountry,
           scheduledDate: scheduledTime,
           executedAt: new Date()
         }
@@ -301,6 +304,9 @@ export async function manualExecution(
           success: result.success,
           error: result.error,
           durationMs: result.durationMs,
+          usedTor: result.usedTor,
+          ipAddress: result.ipAddress,
+          ipCountry: result.ipCountry,
           executedAt: new Date()
         }
       });

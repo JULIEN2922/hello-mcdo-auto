@@ -1,5 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { PrismaClient } from '@prisma/client';
+import { renewTorIP, getTorProxyArgs, checkTorConnection, verifyFrenchIP, startTor, isTorRunning, isIPv6 } from './tor-manager.js';
 
 const prisma = new PrismaClient();
 
@@ -17,6 +18,7 @@ interface ScenarioConfig {
   delayMin: number;
   delayMax: number;
   headless: boolean;
+  useTor: boolean;
 }
 
 interface ExecutionResult {
@@ -24,6 +26,9 @@ interface ExecutionResult {
   scenarioName: string;
   durationMs?: number;
   error?: string;
+  usedTor?: boolean;
+  ipAddress?: string;
+  ipCountry?: string;
 }
 
 // Utility functions
@@ -36,21 +41,22 @@ async function randomWait(minSec: number, maxSec: number): Promise<void> {
   await wait(delay * 1000);
 }
 
-async function clickNext(page: Page): Promise<void> {
-  try {
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {}),
-      page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
-        const nextButton = buttons.find(b => b.textContent?.includes('Suivant'));
-        nextButton?.click();
-      })
-    ]);
-    await wait(1000);
-  } catch (error) {
-    // If no navigation happens, just wait a bit
+async function clickNext(page: Page): Promise<boolean> {
+  await wait(500);
+  const result = await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+    const nextButton = buttons.find(b => b.textContent?.includes('Suivant'));
+    if (nextButton) {
+      nextButton.click();
+      return true;
+    }
+    return false;
+  });
+  
+  if (result) {
     await wait(1000);
   }
+  return result;
 }
 
 /**
@@ -78,23 +84,77 @@ export async function executeScenario(
   const scenarioName = `${config.restaurantCode}_${config.location}_${config.consumptionType}_${config.pickupLocation}`;
   
   let browser: Browser | null = null;
+  let ipAddress: string | undefined;
+  let ipCountry: string | undefined;
   
   try {
     console.log(`🎯 Starting scenario: ${scenarioName}`);
     
+    // Check Tor connection if enabled
+    if (config.useTor) {
+      // Start Tor if not running
+      if (!isTorRunning()) {
+        console.log('🚀 Starting Tor daemon automatically...');
+        await startTor();
+      }
+      
+      const torRunning = await checkTorConnection();
+      if (!torRunning) {
+        throw new Error('Tor failed to start. Please check logs.');
+      }
+      
+      // Renew IP until we get IPv4 (max 5 attempts)
+      let ipInfo;
+      let attempts = 0;
+      const maxAttempts = 5;
+      
+      while (attempts < maxAttempts) {
+        ipInfo = await verifyFrenchIP();
+        
+        if (!isIPv6(ipInfo.ip)) {
+          // Got IPv4, we're good!
+          break;
+        }
+        
+        attempts++;
+        console.log(`⚠️  Got IPv6 address (${ipInfo.ip}), renewing circuit (attempt ${attempts}/${maxAttempts})...`);
+        await renewTorIP();
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10s for new circuit (Tor rate limit)
+      }
+      
+      if (!ipInfo || isIPv6(ipInfo.ip)) {
+        throw new Error(`Failed to obtain IPv4 address after ${maxAttempts} attempts. Last IP: ${ipInfo?.ip}`);
+      }
+      
+      ipAddress = ipInfo.ip;
+      ipCountry = ipInfo.country;
+      console.log(`✅ Using IPv4: ${ipAddress} (${ipCountry})`);
+      
+      if (!ipInfo.isFrench) {
+        console.warn(`⚠️  Warning: IP is not French (${ipCountry}). Continuing anyway...`);
+      }
+    }
+    
     // Launch browser
+    const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox'];
+    if (config.useTor) {
+      launchArgs.push(...getTorProxyArgs());
+      launchArgs.push('--disable-ipv6'); // Force IPv4 only in browser
+    }
+    
     browser = await puppeteer.launch({
       headless: config.headless,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: launchArgs
     });
     
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
     
-    // Navigate to form
+    // Navigate to form (longer timeout for Tor)
     const url = 'https://survey2.medallia.eu/?hellomcdo';
-    console.log(`📄 Navigating to: ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    const navigationTimeout = config.useTor ? 120000 : 60000; // 2 minutes with Tor, 1 minute without
+    console.log(`📄 Navigating to: ${url}${config.useTor ? ' (via Tor, may take longer)' : ''}`);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: navigationTimeout });
     
     await randomWait(config.delayMin, config.delayMax);
     
@@ -182,18 +242,38 @@ export async function executeScenario(
     await clickNext(page);
     
     // Step 7: Overall satisfaction rating
+    // Note: 1=excellent (5 stars visual), 5=very bad (1 star visual)
     console.log(`📄 Step 7: Overall satisfaction (${config.rating}/5)...`);
     await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
     await wait(500);
-    await page.evaluate((rating) => {
+    
+    // DEBUG: Inspect all radio values
+    const radioValues = await page.evaluate(() => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      return Array.from(radios).map((r, i) => ({
+        index: i,
+        value: (r as HTMLInputElement).value,
+        name: (r as HTMLInputElement).name
+      }));
+    });
+    console.log(`   📊 Available radios: ${radioValues.map(r => `[${r.index}]=value"${r.value}"`).join(', ')}`);
+    console.log(`   🎯 Looking for radio with value="${config.rating}"`);
+    
+    const clicked = await page.evaluate((rating) => {
       const radio = document.querySelector(`input[type="radio"][value="${rating}"]`) as HTMLInputElement;
-      radio?.click();
+      if (radio) {
+        radio.click();
+        return true;
+      }
+      return false;
     }, config.rating);
+    console.log(`   ${clicked ? '✅ Clicked' : '❌ NOT FOUND'}`);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
     await clickNext(page);
     
     // Step 8: Detailed dimensions rating
+    // Note: 1=excellent, 5=very bad (same as V1)
     console.log(`📄 Step 8: Detailed dimensions (all ${config.rating}/5)...`);
     await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
     await wait(500);
@@ -229,30 +309,49 @@ export async function executeScenario(
     await randomWait(config.delayMin, config.delayMax);
     await clickNext(page);
     
-    // Step 11: Phone contact (always No)
-    console.log('📄 Step 11: Phone contact (No)...');
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
-    await wait(500);
-    await page.evaluate(() => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[1] as HTMLInputElement)?.click(); // No
-    });
-    await wait(1000);
-    await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
-    
-    // Wait for completion
-    await wait(2000);
+    // Step 11: Phone contact (always No) - LAST STEP
+    // Note: Page may close after step 10 if it's actually the last step
+    try {
+      console.log('📄 Step 11: Phone contact (No)...');
+      await page.waitForSelector('input[type="radio"]', { timeout: 5000 });
+      await wait(500);
+      await page.evaluate(() => {
+        const radios = document.querySelectorAll('input[type="radio"]');
+        (radios[1] as HTMLInputElement)?.click(); // No
+      });
+      await wait(1000);
+      await randomWait(config.delayMin, config.delayMax);
+      
+      // Final submission - page may close after this
+      await clickNext(page);
+      
+      // Wait for completion
+      await wait(2000);
+    } catch (error: any) {
+      // If page closed or step 11 doesn't exist, that's OK - form is submitted
+      if (error.message?.includes('Target closed') || error.message?.includes('Execution context')) {
+        console.log('📄 Step 11: Skipped (form already submitted)');
+      } else {
+        throw error;
+      }
+    }
     
     const durationMs = Date.now() - startTime;
     console.log(`✅ Scenario completed in ${(durationMs / 1000).toFixed(1)}s`);
     
-    await browser.close();
+    try {
+      await browser.close();
+    } catch (e) {
+      // Browser may already be closed
+    }
     
     return {
       success: true,
       scenarioName,
-      durationMs
+      durationMs,
+      usedTor: config.useTor,
+      ipAddress,
+      ipCountry
     };
     
   } catch (error: any) {
@@ -265,7 +364,10 @@ export async function executeScenario(
     return {
       success: false,
       scenarioName,
-      error: error.message
+      error: error.message,
+      usedTor: config.useTor,
+      ipAddress,
+      ipCountry
     };
   }
 }
@@ -285,6 +387,16 @@ export async function executeScenarios(
   for (const [index, scenario] of scenarios.entries()) {
     const promise = (async () => {
       console.log(`\n[${index + 1}/${scenarios.length}] 🔄 Starting scenario...`);
+      
+      // Renew Tor IP before each scenario if enabled
+      if (scenario.useTor && index > 0) {
+        try {
+          await renewTorIP();
+        } catch (error) {
+          console.warn('⚠️  Failed to renew Tor IP, continuing with current IP');
+        }
+      }
+      
       const result = await executeScenario(scenario);
       results.push(result);
       console.log(`[${index + 1}/${scenarios.length}] ${result.success ? '✅' : '❌'} Completed`);
@@ -345,18 +457,71 @@ export async function generateScenarios(
     // Random location
     const location = enabledScenarios[Math.floor(Math.random() * enabledScenarios.length)];
     
-    // Get variants for this location
-    const variants = scenarioVariants[location] || {};
-    const consumptionTypes = variants.consumptionTypes || ['SUR_PLACE', 'A_EMPORTER'];
-    const pickupLocations = variants.pickupLocations || ['COMPTOIR', 'TABLE'];
+    // Apply logical rules based on location type
+    let consumptionType: string;
+    let pickupLocation: string;
     
-    // Random consumption type and pickup location
-    const consumptionType = consumptionTypes[
-      Math.floor(Math.random() * consumptionTypes.length)
-    ];
-    const pickupLocation = pickupLocations[
-      Math.floor(Math.random() * pickupLocations.length)
-    ];
+    switch (location) {
+      case 'COMPTOIR':
+      case 'BORNE':
+      case 'MCCAFE':
+      case 'TABLETTE':
+        // Ces types peuvent être SUR_PLACE ou A_EMPORTER
+        consumptionType = Math.random() > 0.5 ? 'SUR_PLACE' : 'A_EMPORTER';
+        
+        if (consumptionType === 'SUR_PLACE') {
+          // SUR_PLACE → COMPTOIR (60%), MCCAFE (10%), TABLE (30%)
+          const rand = Math.random();
+          if (rand < 0.6) pickupLocation = 'COMPTOIR';
+          else if (rand < 0.7) pickupLocation = 'MCCAFE';
+          else pickupLocation = 'TABLE';
+        } else {
+          // A_EMPORTER → COMPTOIR (80%), MCCAFE (10%), DRIVE (10% pour TABLETTE uniquement)
+          if (location === 'TABLETTE' && Math.random() < 0.1) {
+            pickupLocation = 'MCDRIVE';
+          } else {
+            pickupLocation = Math.random() < 0.9 ? 'COMPTOIR' : 'MCCAFE';
+          }
+        }
+        break;
+        
+      case 'CLICK_COLLECT_APP':
+      case 'CLICK_COLLECT_WEB':
+        // Click & Collect: pas de consommation, choix direct de récupération
+        consumptionType = 'A_EMPORTER'; // Implicite
+        // Récupération: COMPTOIR (50%), MCDRIVE (30%), GUICHET_EXTERIEUR (10%), EXTERIEUR (10%)
+        const rand = Math.random();
+        if (rand < 0.5) pickupLocation = 'COMPTOIR';
+        else if (rand < 0.8) pickupLocation = 'MCDRIVE';
+        else if (rand < 0.9) pickupLocation = 'GUICHET_EXTERIEUR';
+        else pickupLocation = 'EXTERIEUR';
+        break;
+        
+      case 'DRIVE':
+        // Drive: pas de choix (questions sautées)
+        consumptionType = 'A_EMPORTER'; // Implicite
+        pickupLocation = 'MCDRIVE'; // Implicite
+        break;
+        
+      case 'GUICHET_EXTERIEUR':
+        // Guichet extérieur: pas de choix (questions sautées)
+        consumptionType = 'A_EMPORTER'; // Implicite
+        pickupLocation = 'GUICHET_EXTERIEUR'; // Implicite
+        break;
+        
+      case 'LIVRAISON':
+        // Livraison: choix de plateforme (UBER_EATS, DELIVEROO, JUST_EAT, MCDO_APP)
+        consumptionType = 'A_EMPORTER'; // Implicite
+        // Utiliser les plateformes comme pickup location
+        const platforms = ['UBER_EATS', 'DELIVEROO', 'JUST_EAT', 'MCDO_APP'];
+        pickupLocation = platforms[Math.floor(Math.random() * platforms.length)];
+        break;
+        
+      default:
+        // Fallback par défaut
+        consumptionType = 'SUR_PLACE';
+        pickupLocation = 'COMPTOIR';
+    }
     
     // Random rating based on distribution
     const rating = getRandomRating(config);
@@ -364,11 +529,15 @@ export async function generateScenarios(
     // Random age based on distribution
     const age = getRandomAge(config);
     
-    // Exact order
-    const exactOrder = Math.random() * 100 < config.exactOrderPercent;
+    // Exact order (default true if no config)
+    const exactOrder = config.exactOrderPercent !== undefined 
+      ? Math.random() * 100 < config.exactOrderPercent
+      : true;
     
-    // Problem encountered
-    const problemEncountered = Math.random() * 100 < config.problemEncounteredPercent;
+    // Problem encountered (default false if no config)
+    const problemEncountered = config.problemEncounteredPercent !== undefined
+      ? Math.random() * 100 < config.problemEncounteredPercent
+      : false;
     
     scenarios.push({
       restaurantId: restaurant.id,
@@ -383,7 +552,8 @@ export async function generateScenarios(
       problemEncountered,
       delayMin: config.delayMinSeconds,
       delayMax: config.delayMaxSeconds,
-      headless: config.headless
+      headless: config.headless,
+      useTor: config.useTor
     });
   }
   
@@ -432,7 +602,12 @@ function getPickupLocationIndex(location: string): number {
     'TABLE': 2,
     'MCCAFE': 3,
     'GUICHET_EXTERIEUR': 4,
-    'EXTERIEUR': 5
+    'EXTERIEUR': 5,
+    // Plateformes de livraison
+    'UBER_EATS': 0,
+    'DELIVEROO': 1,
+    'JUST_EAT': 2,
+    'MCDO_APP': 3
   };
   return map[location] || 0;
 }
@@ -442,21 +617,28 @@ function getRandomRating(config: any): number {
   let cumulative = 0;
   
   const ratings = [
-    { rating: 1, percent: config.rating1Percent },
-    { rating: 2, percent: config.rating2Percent },
-    { rating: 3, percent: config.rating3Percent },
-    { rating: 4, percent: config.rating4Percent },
-    { rating: 5, percent: config.rating5Percent }
+    { rating: 1, percent: config.rating1Percent || 0 },
+    { rating: 2, percent: config.rating2Percent || 0 },
+    { rating: 3, percent: config.rating3Percent || 0 },
+    { rating: 4, percent: config.rating4Percent || 0 },
+    { rating: 5, percent: config.rating5Percent || 0 }
   ];
+  
+  console.log('🎲 Rating generation:');
+  console.log(`   Random: ${random.toFixed(2)}`);
+  console.log(`   Percents: [${ratings.map(r => `${r.rating}=${r.percent}%`).join(', ')}]`);
   
   for (const { rating, percent } of ratings) {
     cumulative += percent;
+    console.log(`   Checking rating ${rating}: cumulative=${cumulative}, random=${random.toFixed(2)} -> ${random <= cumulative ? '✅ SELECTED' : '❌'}`);
     if (random <= cumulative) {
+      console.log(`   ⭐ Final rating: ${rating}`);
       return rating;
     }
   }
   
-  return 5; // Default to 5
+  console.log('   ⚠️  No rating matched, using default: 1');
+  return 1; // Default to 1 (excellent)
 }
 
 function getRandomAge(config: any): string {

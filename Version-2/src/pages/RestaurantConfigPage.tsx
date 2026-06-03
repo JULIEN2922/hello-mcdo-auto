@@ -26,6 +26,7 @@ interface RestaurantConfig {
   delayMinSeconds: number;
   delayMaxSeconds: number;
   headless: boolean;
+  useTor: boolean;
   restaurant: {
     code: string;
     name: string;
@@ -101,6 +102,7 @@ export default function RestaurantConfigPage() {
   const [delayMin, setDelayMin] = useState(2);
   const [delayMax, setDelayMax] = useState(30);
   const [headless, setHeadless] = useState(true);
+  const [useTor, setUseTor] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -174,8 +176,7 @@ export default function RestaurantConfigPage() {
       setConcurrency(data.concurrency || 1);
       setDelayMin(data.delayMinSeconds || 2);
       setDelayMax(data.delayMaxSeconds || 30);
-      setHeadless(data.headless ?? true);
-    } catch (error) {
+      setHeadless(data.headless ?? true);      setUseTor(data.useTor ?? false);    } catch (error) {
       console.error('Error loading config:', error);
       alert('Erreur lors du chargement de la configuration');
     } finally {
@@ -215,7 +216,8 @@ export default function RestaurantConfigPage() {
         concurrency,
         delayMinSeconds: delayMin,
         delayMaxSeconds: delayMax,
-        headless
+        headless,
+        useTor
       });
       alert('Configuration enregistrée avec succès');
       navigate('/restaurants'); // Redirect to restaurants list
@@ -370,17 +372,17 @@ export default function RestaurantConfigPage() {
         <CardHeader>
           <CardTitle>⭐ Distribution des notes</CardTitle>
           <CardDescription>
-            Définissez le pourcentage de chaque type d'avis. Total: {ratingTotal}%
+            Définissez le pourcentage de chaque type d'avis (1=excellent ⭐⭐⭐⭐⭐, 5=très mauvais ⭐). Total: {ratingTotal}%
             {ratingTotal !== 100 && <span className="text-destructive ml-2">(doit être 100%)</span>}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {[
-            { label: 'Très mauvais (1★)', value: rating1, setValue: setRating1 },
-            { label: 'Mauvais (2★)', value: rating2, setValue: setRating2 },
-            { label: 'Moyen (3★)', value: rating3, setValue: setRating3 },
-            { label: 'Bon (4★)', value: rating4, setValue: setRating4 },
-            { label: 'Excellent (5★)', value: rating5, setValue: setRating5 }
+            { label: 'Excellent (⭐⭐⭐⭐⭐)', value: rating1, setValue: setRating1 },
+            { label: 'Bon (⭐⭐⭐⭐)', value: rating2, setValue: setRating2 },
+            { label: 'Moyen (⭐⭐⭐)', value: rating3, setValue: setRating3 },
+            { label: 'Mauvais (⭐⭐)', value: rating4, setValue: setRating4 },
+            { label: 'Très mauvais (⭐)', value: rating5, setValue: setRating5 }
           ].map((item, index) => (
             <div key={index} className="space-y-2">
               <div className="flex items-center justify-between">
@@ -801,6 +803,22 @@ export default function RestaurantConfigPage() {
               Mode headless (sans interface visible)
             </label>
           </div>
+          
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="useTor"
+              checked={useTor}
+              onChange={(e) => setUseTor(e.target.checked)}
+              className="w-4 h-4 text-primary bg-gray-100 border-gray-300 rounded focus:ring-primary focus:ring-2"
+            />
+            <label htmlFor="useTor" className="text-sm font-medium">
+              Utiliser Tor (IPs françaises différentes pour chaque scénario)
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 ml-6">
+            ⚠️  Tor doit être installé et lancé sur le port 9050. Voir TOR_SETUP.md pour l'installation.
+          </p>
         </CardContent>
       </Card>
 

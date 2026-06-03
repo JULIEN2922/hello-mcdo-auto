@@ -1,0 +1,37 @@
+# Configuration Tor pour Hello McDo Auto
+# Ce fichier force l'utilisation de nœuds de sortie français uniquement
+
+# Répertoire de données (sera créé dans .tor/data)
+DataDirectory data
+
+# Fichiers GeoIP (pour géolocalisation des relais)
+GeoIPFile geoip
+GeoIPv6File geoip6
+
+# Port SOCKS (pour Puppeteer)
+SocksPort 9050
+
+# Port de contrôle (pour renouveler l'IP)
+ControlPort 9051
+
+# Authentification par cookie (plus simple que mot de passe)
+CookieAuthentication 1
+
+# Forcer les nœuds de sortie français uniquement (désactivé temporairement pour permettre bootstrap)
+# ExitNodes {fr}
+# StrictNodes 1
+
+# Désactiver IPv6 côté client
+ClientUseIPv6 0
+ClientPreferIPv6ORPort 0
+
+# Éviter les nœuds de certains pays (optionnel)
+ExcludeNodes {cn},{ru},{ir},{kp}
+
+# Performance
+NumEntryGuards 8
+CircuitBuildTimeout 60
+LearnCircuitBuildTimeout 0
+
+# Logs pour debug
+Log notice stdout

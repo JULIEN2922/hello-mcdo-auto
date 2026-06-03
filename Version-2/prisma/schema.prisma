@@ -100,6 +100,9 @@ model ScenarioLog {
   success             Boolean           @default(false)
   error               String?
   durationMs          Int?
+  usedTor             Boolean?          // Whether Tor was used for this scenario
+  ipAddress           String?           // IP address used (if Tor, the exit node IP)
+  ipCountry           String?           // Country code of the IP (should be FR if Tor)
   scheduledDate       DateTime?
   executedAt          DateTime          @default(now())
   createdAt           DateTime          @default(now())
@@ -161,6 +164,7 @@ model RestaurantConfig {
   delayMinSeconds            Int      @default(2)   // Minimum delay between actions (seconds)
   delayMaxSeconds            Int      @default(30)  // Maximum delay between actions (seconds)
   headless                   Boolean  @default(true) // Run browser in headless mode
+  useTor                     Boolean  @default(false) // Use Tor network for different IPs (France only)
   
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

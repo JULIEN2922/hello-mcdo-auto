@@ -30,6 +30,9 @@ logs/
 *.db-journal
 prisma/migrations/
 
+# Tor runtime
+.tor/
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

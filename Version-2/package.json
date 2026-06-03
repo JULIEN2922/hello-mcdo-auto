@@ -15,7 +15,14 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test:tor": "node --import tsx test-tor.js",
+    "test:scenario": "node --import tsx test-scenario.ts",
+    "test:simple": "node --import tsx test-simple.ts",
+    "test:debug": "node --import tsx test-debug-step8.ts",
+    "inspect": "node --import tsx inspect-restaurant.ts",
+    "inspect:html": "node --import tsx inspect-html-values.ts",
+    "fix:config": "node --import tsx fix-restaurant-config.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",
@@ -29,6 +36,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
+    "kmp-tor.resource-exec-tor.all": "^409.5.1-SNAPSHOT.0",
+    "kmp-tor.resource-geoip": "^409.5.1-SNAPSHOT.0",
     "lucide-react": "^0.379.0",
     "puppeteer": "^22.15.0",
     "react": "^18.3.1",

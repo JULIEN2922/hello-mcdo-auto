@@ -3,6 +3,10 @@ import api from './api';
 export interface ExecutionStatus {
   isRunning: boolean;
   restaurantId?: string;
+  restaurant?: {
+    code: string;
+    name: string;
+  };
   startedAt?: string;
   totalScenarios?: number;
   completed?: number;

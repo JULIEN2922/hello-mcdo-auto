@@ -68,7 +68,12 @@ router.put('/:restaurantId', authenticate, canConfigureRestaurant, async (req: A
       enabledScenarios,
       scenarioVariants,
       exactOrderPercent,
-      problemEncounteredPercent
+      problemEncounteredPercent,
+      concurrency,
+      delayMinSeconds,
+      delayMaxSeconds,
+      headless,
+      useTor
     } = req.body;
 
     // Validate rating distribution
@@ -115,7 +120,12 @@ router.put('/:restaurantId', authenticate, canConfigureRestaurant, async (req: A
         enabledScenarios: JSON.stringify(enabledScenarios || []),
         scenarioVariants: JSON.stringify(scenarioVariants || {}),
         exactOrderPercent,
-        problemEncounteredPercent
+        problemEncounteredPercent,
+        concurrency: concurrency ?? 1,
+        delayMinSeconds: delayMinSeconds ?? 2,
+        delayMaxSeconds: delayMaxSeconds ?? 30,
+        headless: headless ?? true,
+        useTor: useTor ?? false
       },
       update: {
         rating1Percent,
@@ -130,7 +140,12 @@ router.put('/:restaurantId', authenticate, canConfigureRestaurant, async (req: A
         enabledScenarios: JSON.stringify(enabledScenarios || []),
         scenarioVariants: JSON.stringify(scenarioVariants || {}),
         exactOrderPercent,
-        problemEncounteredPercent
+        problemEncounteredPercent,
+        concurrency: concurrency ?? 1,
+        delayMinSeconds: delayMinSeconds ?? 2,
+        delayMaxSeconds: delayMaxSeconds ?? 30,
+        headless: headless ?? true,
+        useTor: useTor ?? false
       },
       include: { restaurant: { select: { code: true, name: true } } }
     });
@@ -151,6 +166,11 @@ router.put('/:restaurantId', authenticate, canConfigureRestaurant, async (req: A
       if (oldConfig.scenarioVariants !== JSON.stringify(scenarioVariants)) changes.scenarioVariants = { from: JSON.parse(oldConfig.scenarioVariants), to: scenarioVariants };
       if (oldConfig.exactOrderPercent !== exactOrderPercent) changes.exactOrderPercent = { from: oldConfig.exactOrderPercent, to: exactOrderPercent };
       if (oldConfig.problemEncounteredPercent !== problemEncounteredPercent) changes.problemEncounteredPercent = { from: oldConfig.problemEncounteredPercent, to: problemEncounteredPercent };
+      if (oldConfig.concurrency !== (concurrency ?? 1)) changes.concurrency = { from: oldConfig.concurrency, to: concurrency ?? 1 };
+      if (oldConfig.delayMinSeconds !== (delayMinSeconds ?? 2)) changes.delayMinSeconds = { from: oldConfig.delayMinSeconds, to: delayMinSeconds ?? 2 };
+      if (oldConfig.delayMaxSeconds !== (delayMaxSeconds ?? 30)) changes.delayMaxSeconds = { from: oldConfig.delayMaxSeconds, to: delayMaxSeconds ?? 30 };
+      if (oldConfig.headless !== (headless ?? true)) changes.headless = { from: oldConfig.headless, to: headless ?? true };
+      if (oldConfig.useTor !== (useTor ?? false)) changes.useTor = { from: oldConfig.useTor, to: useTor ?? false };
     } else {
       changes.created = true;
     }
