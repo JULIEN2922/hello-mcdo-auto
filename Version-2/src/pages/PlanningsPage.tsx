@@ -6,7 +6,7 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { restaurantApi, planningApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, Save, Trash2, Clock, Edit2 } from 'lucide-react';
+import { Save, Trash2, Clock, Edit2 } from 'lucide-react';
 
 const DAYS = [
   { key: 'MONDAY', label: 'Lundi', index: 1 },

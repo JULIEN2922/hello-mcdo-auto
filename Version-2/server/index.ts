@@ -10,11 +10,16 @@ import userRoutes from './routes/users.js';
 import executionRoutes from './routes/execution.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { startScheduler } from './services/scheduler.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 12312;
 
 // Middleware
 app.use(cors({
@@ -38,13 +43,14 @@ app.use('/api/scenarios', scenarioRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/execution', executionRoutes);
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static('dist/client'));
-  app.get('*', (_req, res) => {
-    res.sendFile('dist/client/index.html', { root: '.' });
-  });
-}
+// Serve static files (Vite build output)
+const clientDist = path.resolve(__dirname, '..', 'client');
+app.use(express.static(clientDist));
+app.get('*', (_req, res, next) => {
+  // Skip API routes
+  if (_req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 // Error handler (must be last)
 app.use(errorHandler);

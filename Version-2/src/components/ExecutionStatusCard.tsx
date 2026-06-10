@@ -4,6 +4,18 @@ import { Button } from '@/components/ui/button';
 import { executionApi, ExecutionStatus, RecentExecution } from '@/lib/execution-api';
 import { Play, Loader2, CheckCircle, Clock } from 'lucide-react';
 
+// Helper function to display rating as stars
+function formatRating(rating: number): string {
+  const stars = {
+    1: '⭐⭐⭐⭐⭐',
+    2: '⭐⭐⭐⭐',
+    3: '⭐⭐⭐',
+    4: '⭐⭐',
+    5: '⭐'
+  };
+  return stars[rating as keyof typeof stars] || `${rating}/5`;
+}
+
 interface Props {
   restaurantId?: string;
 }
@@ -147,7 +159,7 @@ export function ExecutionStatusCard({ restaurantId }: Props) {
                           </span>
                         </div>
                         <div className="text-muted-foreground ml-5">
-                          {exec.pickupLocation} • Note: {exec.rating}/5
+                          {exec.pickupLocation} • {formatRating(exec.rating)}
                           {exec.durationMs && ` • ${Math.round(exec.durationMs / 1000)}s`}
                         </div>
                         <div className="text-muted-foreground ml-5">
@@ -192,7 +204,7 @@ export function ExecutionStatusCard({ restaurantId }: Props) {
                           </span>
                         </div>
                         <div className="text-muted-foreground ml-5">
-                          {exec.location} • {exec.consumptionType} • Note: {exec.rating}/5
+                          {exec.location} • {exec.consumptionType} • {formatRating(exec.rating)}
                         </div>
                         <div className="text-muted-foreground ml-5">
                           {new Date(exec.executedAt).toLocaleString('fr-FR')}

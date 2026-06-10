@@ -1,5 +1,7 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { PrismaClient } from '@prisma/client';
+import path from 'path';
+import fs from 'fs';
 import { renewTorIP, getTorProxyArgs, checkTorConnection, verifyFrenchIP, startTor, isTorRunning, isIPv6 } from './tor-manager.js';
 
 const prisma = new PrismaClient();
@@ -54,7 +56,15 @@ async function clickNext(page: Page): Promise<boolean> {
   });
   
   if (result) {
-    await wait(1000);
+    // Wait for DOM to stabilize after SPA transition
+    // First, a short wait for the click to register
+    await wait(1500);
+    // Then wait for any network requests triggered by the transition to settle
+    try {
+      await page.waitForNetworkIdle({ timeout: 15000, idleTime: 1000 });
+    } catch {
+      // network idle timeout is OK - page may not have triggered requests
+    }
   }
   return result;
 }
@@ -135,7 +145,21 @@ export async function executeScenario(
       }
     }
     
-    // Launch browser
+    // Launch browser with chrome-libs path for shared libraries
+    const chromeLibsPath = path.join(process.env.HOME || '/home/container', 'chrome-libs');
+    const launchEnv: Record<string, string> = {};
+    
+    // Always prepend chrome-libs to LD_LIBRARY_PATH if the directory exists
+    if (fs.existsSync(chromeLibsPath)) {
+      const existingLdPath = process.env.LD_LIBRARY_PATH || '';
+      launchEnv.LD_LIBRARY_PATH = existingLdPath 
+        ? `${chromeLibsPath}:${existingLdPath}` 
+        : chromeLibsPath;
+      console.log(`📚 Using Chrome libs from: ${chromeLibsPath}`);
+    } else {
+      console.warn(`⚠️  Chrome libs not found at ${chromeLibsPath}. Run: npm run install:deps`);
+    }
+    
     const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox'];
     if (config.useTor) {
       launchArgs.push(...getTorProxyArgs());
@@ -144,7 +168,8 @@ export async function executeScenario(
     
     browser = await puppeteer.launch({
       headless: config.headless,
-      args: launchArgs
+      args: launchArgs,
+      env: launchEnv
     });
     
     const page = await browser.newPage();
@@ -162,13 +187,19 @@ export async function executeScenario(
     console.log('📄 Step 1: Starting survey...');
     await page.waitForSelector('#buttonBegin', { timeout: 10000 });
     await page.click('#buttonBegin');
+    // Wait for SPA transition to load Step 2 (cold start may be slow)
+    try {
+      await page.waitForNetworkIdle({ timeout: 20000, idleTime: 1000 });
+    } catch {
+      // network idle timeout is OK - continue anyway
+    }
     await wait(2000);
     await randomWait(config.delayMin, config.delayMax);
     
     // Step 2: Age selection
     const ageIndex = getAgeIndex(config.age || '25-34');
     console.log(`📄 Step 2: Age selection (${config.age})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await page.waitForSelector('input[type="radio"]', { timeout: 30000 });
     await page.evaluate((index) => {
       const radios = document.querySelectorAll('input[type="radio"]');
       (radios[index] as HTMLInputElement)?.click();
@@ -446,8 +477,7 @@ export async function generateScenarios(
   
   // Parse enabled scenarios
   const enabledScenarios = JSON.parse(config.enabledScenarios || '["BORNE", "COMPTOIR", "DRIVE"]') as string[];
-  const scenarioVariants = JSON.parse(config.scenarioVariants || '{}') as any;
-  
+
   // Check if we have enabled scenarios
   if (!enabledScenarios || enabledScenarios.length === 0) {
     throw new Error('No enabled scenarios configured for this restaurant');

@@ -173,7 +173,7 @@ export function LogsPage() {
                       <TableHead>Lieu</TableHead>
                       <TableHead>Consommation</TableHead>
                       <TableHead>Récupération</TableHead>
-                      <TableHead>Note</TableHead>
+                      <TableHead>Satisfaction</TableHead>
                       <TableHead>Statut</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -200,7 +200,18 @@ export function LogsPage() {
                         </TableCell>
                         <TableCell>
                           {log.rating ? (
-                            <span className="text-sm">{log.rating}/5</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-sm">
+                                {log.rating === 1 && '⭐⭐⭐⭐⭐'}
+                                {log.rating === 2 && '⭐⭐⭐⭐'}
+                                {log.rating === 3 && '⭐⭐⭐'}
+                                {log.rating === 4 && '⭐⭐'}
+                                {log.rating === 5 && '⭐'}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                ({log.rating === 1 ? 'Excellent' : log.rating === 2 ? 'Bon' : log.rating === 3 ? 'Moyen' : log.rating === 4 ? 'Mauvais' : 'Très mauvais'})
+                              </span>
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
