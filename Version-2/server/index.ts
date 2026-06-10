@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import authRoutes from './routes/auth.js';
 import restaurantRoutes from './routes/restaurants.js';
 import restaurantConfigRoutes from './routes/restaurant-configs.js';
@@ -14,6 +15,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const ts = () => `[${new Date().toISOString()}]`;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,21 +46,22 @@ app.use('/api/scenarios', scenarioRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/execution', executionRoutes);
 
-// Serve static files (Vite build output)
+// Serve static files (Vite build output) — only if built client exists
 const clientDist = path.resolve(__dirname, '..', 'client');
-app.use(express.static(clientDist));
-app.get('*', (_req, res, next) => {
-  // Skip API routes
-  if (_req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(clientDist, 'index.html'));
-});
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (_req, res, next) => {
+    if (_req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Error handler (must be last)
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(ts(), `🚀 Server running on http://localhost:${PORT}`);
+  console.log(ts(), `📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   
   // Start the scenario execution scheduler
   startScheduler();

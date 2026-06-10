@@ -6,6 +6,9 @@ import { renewTorIP, getTorProxyArgs, checkTorConnection, verifyFrenchIP, startT
 
 const prisma = new PrismaClient();
 
+// Module-level timestamp helper for functions outside executeScenario
+const mts = () => `[${new Date().toISOString()}]`;
+
 interface ScenarioConfig {
   restaurantId: string;
   restaurantCode: string;
@@ -43,30 +46,102 @@ async function randomWait(minSec: number, maxSec: number): Promise<void> {
   await wait(delay * 1000);
 }
 
-async function clickNext(page: Page): Promise<boolean> {
-  await wait(500);
-  const result = await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
-    const nextButton = buttons.find(b => b.textContent?.includes('Suivant'));
-    if (nextButton) {
-      nextButton.click();
-      return true;
-    }
+/**
+ * Check if the survey has ended by looking for the thank-you message.
+ * (feedless in URL is NORMAL - appears from Step 2 onward, do NOT use it)
+ */
+async function isSurveyEnded(page: Page): Promise<boolean> {
+  try {
+    return await page.evaluate(() => {
+      return document.body?.innerText?.includes('remercions de votre participation') ?? false;
+    });
+  } catch {
     return false;
-  });
+  }
+}
+
+/**
+ * Click "Suivant" and check if the survey ended (thank-you page).
+ * Uses simple waits instead of waitForNetworkIdle (Medallia has persistent analytics
+ * connections that prevent network idle from ever being detected).
+ * Throws SURVEY_ENDED if the survey completed after the click.
+ */
+async function clickNextOrEnd(page: Page): Promise<void> {
+  await wait(500);
   
-  if (result) {
-    // Wait for DOM to stabilize after SPA transition
-    // First, a short wait for the click to register
-    await wait(1500);
-    // Then wait for any network requests triggered by the transition to settle
-    try {
-      await page.waitForNetworkIdle({ timeout: 15000, idleTime: 1000 });
-    } catch {
-      // network idle timeout is OK - page may not have triggered requests
+  // Click the Suivant button with a safety timeout
+  const clicked = await Promise.race([
+    page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+      const nextButton = buttons.find(b => b.textContent?.includes('Suivant'));
+      if (nextButton) {
+        nextButton.click();
+        return true;
+      }
+      return false;
+    }),
+    new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('clickNextOrEnd: evaluate timed out')), 10000))
+  ]);
+  
+  if (!clicked) {
+    if (await isSurveyEnded(page)) {
+      console.log('🏁 Survey ended (no Suivant button + thank-you page)');
+      throw new Error('SURVEY_ENDED');
+    }
+    console.warn('⚠️  No Suivant button found, continuing...');
+    return;
+  }
+  
+  // Wait for SPA transition (Medallia takes ~1-3s to render next step)
+  // Do NOT use waitForNetworkIdle — Medallia has persistent analytics pings
+  await wait(3000);
+  
+  // Quick check: did we land on the thank-you page?
+  if (await isSurveyEnded(page)) {
+    console.log('🏁 Survey ended after Suivant (thank-you page)');
+    throw new Error('SURVEY_ENDED');
+  }
+  
+  // Wait briefly for the next step's content to appear
+  // If radio buttons appear, the transition completed successfully
+  try {
+    await page.waitForSelector('input[type="radio"]', { timeout: 5000 });
+  } catch {
+    // No radios yet — check if survey ended, otherwise the next step's
+    // waitForRadiosOrFail with longer timeout will handle it
+    if (await isSurveyEnded(page)) {
+      console.log('🏁 Survey ended after Suivant (thank-you page)');
+      throw new Error('SURVEY_ENDED');
     }
   }
-  return result;
+}
+
+/**
+ * Wait for radio buttons to appear, with debug info on timeout.
+ * If the survey ended (thank-you page), treats it as success.
+ */
+async function waitForRadiosOrFail(page: Page, stepName: string, timeoutMs: number): Promise<void> {
+  try {
+    await page.waitForSelector('input[type="radio"]', { timeout: timeoutMs });
+  } catch {
+    // Check if survey ended (thank-you page) — not an error
+    if (await isSurveyEnded(page)) {
+      console.log(`🏁 [${stepName}] Survey ended (thank-you page) — treating as success`);
+      throw new Error('SURVEY_ENDED');
+    }
+    
+    // Capture page state for debugging
+    const pageTitle = await page.title().catch(() => 'unknown');
+    const pageUrl = page.url();
+    const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 500) || '(empty)').catch(() => '(error)');
+    
+    console.error(`❌ [${stepName}] No radio buttons found after ${timeoutMs}ms`);
+    console.error(`   📍 URL: ${pageUrl}`);
+    console.error(`   📄 Title: "${pageTitle}"`);
+    console.error(`   📝 Body preview: ${bodyText.replace(/\\n/g, ' | ')}`);
+    
+    throw new Error(`Step "${stepName}" failed: No radio buttons found. Page title: "${pageTitle}"`);
+  }
 }
 
 /**
@@ -97,7 +172,17 @@ export async function executeScenario(
   let ipAddress: string | undefined;
   let ipCountry: string | undefined;
   
+  // Save original console methods and override with timestamped versions
+  const _log = console.log.bind(console);
+  const _warn = console.warn.bind(console);
+  const _error = console.error.bind(console);
+  const ts = () => `[${new Date().toISOString()}]`;
+  
   try {
+    console.log = (...args: any[]) => _log(ts(), ...args);
+    console.warn = (...args: any[]) => _warn(ts(), ...args);
+    console.error = (...args: any[]) => _error(ts(), ...args);
+    
     console.log(`🎯 Starting scenario: ${scenarioName}`);
     
     // Check Tor connection if enabled
@@ -160,7 +245,14 @@ export async function executeScenario(
       console.warn(`⚠️  Chrome libs not found at ${chromeLibsPath}. Run: npm run install:deps`);
     }
     
-    const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox'];
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      // Anti-bot-detection: hide automation flags
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-dev-shm-usage',
+    ];
     if (config.useTor) {
       launchArgs.push(...getTorProxyArgs());
       launchArgs.push('--disable-ipv6'); // Force IPv4 only in browser
@@ -173,6 +265,15 @@ export async function executeScenario(
     });
     
     const page = await browser.newPage();
+    
+    // Hide webdriver flag to avoid bot detection
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+    
+    // Use a realistic user agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36');
+    
     await page.setViewport({ width: 1920, height: 1080 });
     
     // Navigate to form (longer timeout for Tor)
@@ -188,94 +289,127 @@ export async function executeScenario(
     await page.waitForSelector('#buttonBegin', { timeout: 10000 });
     await page.click('#buttonBegin');
     // Wait for SPA transition to load Step 2 (cold start may be slow)
-    try {
-      await page.waitForNetworkIdle({ timeout: 20000, idleTime: 1000 });
-    } catch {
-      // network idle timeout is OK - continue anyway
+    // Do NOT use waitForNetworkIdle — Medallia has persistent analytics connections
+    await wait(3000);
+    // Quick check: did survey end immediately?
+    if (await isSurveyEnded(page)) {
+      console.log('🏁 Survey ended after Begin (thank-you page)');
+      throw new Error('SURVEY_ENDED');
     }
-    await wait(2000);
     await randomWait(config.delayMin, config.delayMax);
     
     // Step 2: Age selection
-    const ageIndex = getAgeIndex(config.age || '25-34');
+    const ageValue = getAgeValue(config.age || '25-34');
     console.log(`📄 Step 2: Age selection (${config.age})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 30000 });
-    await page.evaluate((index) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[index] as HTMLInputElement)?.click();
-    }, ageIndex);
+    await waitForRadiosOrFail(page, 'Step 2 - Age', 30000);
+    await page.evaluate((value) => {
+      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
+    }, ageValue);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 3: Ticket information
     console.log('📄 Step 3: Ticket information...');
     const { date, hour, minute } = getDateTimeNow();
     
     await page.waitForSelector('#cal_q_mc_q_date_', { timeout: 10000 });
-    await wait(500);
-    await page.type('#cal_q_mc_q_date_', date);
-    await wait(500);
+    
+    // Fill fields by setting value directly via JS (Medallia date picker blocks page.type)
+    const fillField = async (selector: string, value: string) => {
+      await page.evaluate(({sel, val}) => {
+        const el = document.querySelector(sel) as HTMLInputElement;
+        if (!el) return;
+        el.focus();
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+      }, {sel: selector, val: value});
+      await wait(200);
+    };
+    
+    await fillField('#cal_q_mc_q_date_', date);
     await randomWait(config.delayMin, config.delayMax);
     
-    await page.type('#spl_rng_q_mc_q_hour', hour);
-    await wait(500);
+    await fillField('#spl_rng_q_mc_q_hour', hour);
     await randomWait(config.delayMin, config.delayMax);
     
-    await page.type('#spl_rng_q_mc_q_minute', minute);
-    await wait(500);
+    await fillField('#spl_rng_q_mc_q_minute', minute);
     await randomWait(config.delayMin, config.delayMax);
     
-    await page.type('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
-    await wait(500);
+    await fillField('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
     await randomWait(config.delayMin, config.delayMax);
     
-    await clickNext(page);
+    await clickNextOrEnd(page);
+    
+    // Check if form validation blocked us (still on ticket page = no radios)
+    let radioCheck = await page.evaluate(() => document.querySelectorAll('input[type="radio"]').length);
+    if (radioCheck === 0) {
+      console.warn('⚠️  Ticket validation failed — retrying with JS value set...');
+      // Re-fill all fields
+      await fillField('#cal_q_mc_q_date_', date);
+      await fillField('#spl_rng_q_mc_q_hour', hour);
+      await fillField('#spl_rng_q_mc_q_minute', minute);
+      await fillField('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
+      await wait(500);
+      await clickNextOrEnd(page);
+      
+      // Re-check after retry: did validation pass this time?
+      radioCheck = await page.evaluate(() => document.querySelectorAll('input[type="radio"]').length);
+      if (radioCheck === 0) {
+        // Still on ticket page — capture validation error details
+        const pageTitle = await page.title().catch(() => 'unknown');
+        const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 800) || '(empty)').catch(() => '(error)');
+        console.error(`❌ Ticket validation still failing after retry. Page: "${pageTitle}"`);
+        console.error(`   📝 Body: ${bodyText.replace(/\\n/g, ' | ')}`);
+        throw new Error(`Step "Step 3 - Ticket" failed: Form validation blocked progression after retry. Check date format and restaurant code. Date="${date}" Hour="${hour}" Min="${minute}" Restaurant="${config.restaurantCode}"`);
+      }
+      console.log('✅ Ticket validation succeeded on retry');
+    }
     
     // Step 4: Order location
     console.log(`📄 Step 4: Order location (${config.location})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 4 - Location', 20000);
     await wait(500);
     
-    const locationIndex = getLocationIndex(config.location);
-    await page.evaluate((index) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[index] as HTMLInputElement)?.click();
-    }, locationIndex);
+    const locationValue = getLocationValue(config.location);
+    await page.evaluate((value) => {
+      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
+    }, locationValue);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 5: Consumption type
     console.log(`📄 Step 5: Consumption type (${config.consumptionType})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 5 - Consumption', 20000);
     await wait(500);
-    const consumptionIndex = getConsumptionTypeIndex(config.consumptionType);
-    await page.evaluate((index) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[index] as HTMLInputElement)?.click();
-    }, consumptionIndex);
+    const consumptionValue = getConsumptionValue(config.consumptionType);
+    await page.evaluate((value) => {
+      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
+    }, consumptionValue);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 6: Pickup location
     console.log(`📄 Step 6: Pickup location (${config.pickupLocation})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 6 - Pickup', 20000);
     await wait(500);
-    const pickupIndex = getPickupLocationIndex(config.pickupLocation);
-    await page.evaluate((index) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[index] as HTMLInputElement)?.click();
-    }, pickupIndex);
+    const pickupValue = getPickupValue(config.pickupLocation);
+    await page.evaluate((value) => {
+      const radio = document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement;
+      if (radio) radio.click();
+    }, pickupValue);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 7: Overall satisfaction rating
     // Note: 1=excellent (5 stars visual), 5=very bad (1 star visual)
     console.log(`📄 Step 7: Overall satisfaction (${config.rating}/5)...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 7 - Satisfaction', 20000);
     await wait(500);
     
     // DEBUG: Inspect all radio values
@@ -301,12 +435,12 @@ export async function executeScenario(
     console.log(`   ${clicked ? '✅ Clicked' : '❌ NOT FOUND'}`);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 8: Detailed dimensions rating
     // Note: 1=excellent, 5=very bad (same as V1)
     console.log(`📄 Step 8: Detailed dimensions (all ${config.rating}/5)...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 8 - Dimensions', 20000);
     await wait(500);
     await page.evaluate((rating) => {
       const radios = document.querySelectorAll(`input[type="radio"][value="${rating}"]`);
@@ -314,51 +448,54 @@ export async function executeScenario(
     }, config.rating);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 9: Exact order
     console.log(`📄 Step 9: Exact order (${config.exactOrder ? 'Yes' : 'No'})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 9 - Exact order', 20000);
     await wait(500);
     await page.evaluate((isExact) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[isExact ? 0 : 1] as HTMLInputElement)?.click();
+      const val = isExact ? '1' : '2'; // 1=Oui, 2=Non
+      (document.querySelector(`input[type="radio"][value="${val}"]`) as HTMLInputElement)?.click();
     }, config.exactOrder);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 10: Problem encountered
     console.log(`📄 Step 10: Problem encountered (${config.problemEncountered ? 'Yes' : 'No'})...`);
-    await page.waitForSelector('input[type="radio"]', { timeout: 10000 });
+    await waitForRadiosOrFail(page, 'Step 10 - Problem', 20000);
     await wait(500);
     await page.evaluate((hasProblem) => {
-      const radios = document.querySelectorAll('input[type="radio"]');
-      (radios[hasProblem ? 0 : 1] as HTMLInputElement)?.click();
+      const val = hasProblem ? '1' : '2'; // 1=Oui, 2=Non
+      (document.querySelector(`input[type="radio"][value="${val}"]`) as HTMLInputElement)?.click();
     }, config.problemEncountered);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNext(page);
+    await clickNextOrEnd(page);
     
     // Step 11: Phone contact (always No) - LAST STEP
     // Note: Page may close after step 10 if it's actually the last step
     try {
       console.log('📄 Step 11: Phone contact (No)...');
-      await page.waitForSelector('input[type="radio"]', { timeout: 5000 });
+      await waitForRadiosOrFail(page, 'Step 11 - Phone', 5000);
       await wait(500);
       await page.evaluate(() => {
-        const radios = document.querySelectorAll('input[type="radio"]');
-        (radios[1] as HTMLInputElement)?.click(); // No
+        (document.querySelector(`input[type="radio"][value="2"]`) as HTMLInputElement)?.click(); // 2=Non
       });
       await wait(1000);
       await randomWait(config.delayMin, config.delayMax);
       
       // Final submission - page may close after this
-      await clickNext(page);
+      await clickNextOrEnd(page);
       
       // Wait for completion
       await wait(2000);
     } catch (error: any) {
+      // SURVEY_ENDED = survey completed (thank-you page)
+      if (error.message === 'SURVEY_ENDED') {
+        throw error; // Re-throw to outer catch which treats it as success
+      }
       // If page closed or step 11 doesn't exist, that's OK - form is submitted
       if (error.message?.includes('Target closed') || error.message?.includes('Execution context')) {
         console.log('📄 Step 11: Skipped (form already submitted)');
@@ -376,6 +513,9 @@ export async function executeScenario(
       // Browser may already be closed
     }
     
+    // Restore original console
+    console.log = _log; console.warn = _warn; console.error = _error;
+    
     return {
       success: true,
       scenarioName,
@@ -386,11 +526,36 @@ export async function executeScenario(
     };
     
   } catch (error: any) {
+    // SURVEY_ENDED = survey reached thank-you page gracefully
+    if (error.message === 'SURVEY_ENDED') {
+      const durationMs = Date.now() - startTime;
+      console.log(`✅ Survey ended (thank-you page) — treating as success (${(durationMs / 1000).toFixed(1)}s)`);
+      
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+      
+      // Restore original console
+      console.log = _log; console.warn = _warn; console.error = _error;
+      
+      return {
+        success: true,
+        scenarioName,
+        durationMs,
+        usedTor: config.useTor,
+        ipAddress,
+        ipCountry
+      };
+    }
+    
     console.error(`❌ Scenario failed: ${error.message}`);
     
     if (browser) {
       await browser.close();
     }
+    
+    // Restore original console
+    console.log = _log; console.warn = _warn; console.error = _error;
     
     return {
       success: false,
@@ -410,27 +575,27 @@ export async function executeScenarios(
   scenarios: ScenarioConfig[],
   concurrency: number = 1
 ): Promise<ExecutionResult[]> {
-  console.log(`\n🚀 Starting execution of ${scenarios.length} scenarios with concurrency ${concurrency}`);
+  console.log(mts(), `\n🚀 Starting execution of ${scenarios.length} scenarios with concurrency ${concurrency}`);
   
   const results: ExecutionResult[] = [];
   const executing: Promise<void>[] = [];
   
   for (const [index, scenario] of scenarios.entries()) {
     const promise = (async () => {
-      console.log(`\n[${index + 1}/${scenarios.length}] 🔄 Starting scenario...`);
+      console.log(mts(), `\n[${index + 1}/${scenarios.length}] 🔄 Starting scenario...`);
       
       // Renew Tor IP before each scenario if enabled
       if (scenario.useTor && index > 0) {
         try {
           await renewTorIP();
         } catch (error) {
-          console.warn('⚠️  Failed to renew Tor IP, continuing with current IP');
+          console.warn(mts(), '⚠️  Failed to renew Tor IP, continuing with current IP');
         }
       }
       
       const result = await executeScenario(scenario);
       results.push(result);
-      console.log(`[${index + 1}/${scenarios.length}] ${result.success ? '✅' : '❌'} Completed`);
+      console.log(mts(), `[${index + 1}/${scenarios.length}] ${result.success ? '✅' : '❌'} Completed`);
     })();
     
     executing.push(promise);
@@ -451,7 +616,7 @@ export async function executeScenarios(
   const success = results.filter(r => r.success).length;
   const failed = results.length - success;
   
-  console.log(`\n📊 Execution complete: ${success} success, ${failed} failed`);
+  console.log(mts(), `\n📊 Execution complete: ${success} success, ${failed} failed`);
   
   return results;
 }
@@ -590,56 +755,52 @@ export async function generateScenarios(
   return scenarios;
 }
 
-// Helper functions
-function getAgeIndex(age: string): number {
+// Helper functions — return radio VALUES (not DOM indices)
+function getAgeValue(age: string): number {
   const map: Record<string, number> = {
-    '<15': 0,
-    '15-24': 1,
-    '25-34': 2,
-    '35-49': 3,
-    '50+': 4
+    '<15': 1,
+    '15-24': 2,
+    '25-34': 3,
+    '35-49': 4,
+    '50+': 5
   };
-  return map[age] || 2; // Default to 25-34
+  return map[age] || 3;
 }
 
-function getLocationIndex(location: string): number {
+function getLocationValue(location: string): number {
   const map: Record<string, number> = {
-    'BORNE': 0,
+    'BORNE': 1,
+    'COMPTOIR': 2,
+    'DRIVE': 3,
+    'GUICHET': 4,
+    'MCCAFE': 5,
+    'CLICK_COLLECT_APP': 6,
+    'CLICK_COLLECT_WEB': 7,
+    'LIVRAISON': 8,
+    'TABLETTE': 9
+  };
+  return map[location] || 1;
+}
+
+function getConsumptionValue(type: string): number {
+  return type === 'SUR_PLACE' ? 1 : 2;
+}
+
+// Pickup values are NON-sequential on Medallia: COMPTOIR=1, MCCAFE=4, TABLE=6
+function getPickupValue(location: string): number {
+  const map: Record<string, number> = {
     'COMPTOIR': 1,
-    'DRIVE': 2,
-    'GUICHET': 3,
     'MCCAFE': 4,
-    'CLICK_COLLECT_APP': 5,
-    'CLICK_COLLECT_WEB': 6,
-    'LIVRAISON': 7,
-    'TABLETTE': 8
+    'TABLE': 6,
+    'MCDRIVE': 1,       // May vary by scenario context
+    'GUICHET_EXTERIEUR': 1,
+    'EXTERIEUR': 1,
+    'UBER_EATS': 1,
+    'DELIVEROO': 2,
+    'JUST_EAT': 3,
+    'MCDO_APP': 4
   };
-  return map[location] || 0;
-}
-
-function getConsumptionTypeIndex(type: string): number {
-  const map: Record<string, number> = {
-    'SUR_PLACE': 0,
-    'A_EMPORTER': 1
-  };
-  return map[type] || 0;
-}
-
-function getPickupLocationIndex(location: string): number {
-  const map: Record<string, number> = {
-    'COMPTOIR': 0,
-    'MCDRIVE': 1,
-    'TABLE': 2,
-    'MCCAFE': 3,
-    'GUICHET_EXTERIEUR': 4,
-    'EXTERIEUR': 5,
-    // Plateformes de livraison
-    'UBER_EATS': 0,
-    'DELIVEROO': 1,
-    'JUST_EAT': 2,
-    'MCDO_APP': 3
-  };
-  return map[location] || 0;
+  return map[location] || 1;
 }
 
 function getRandomRating(config: any): number {
@@ -654,20 +815,20 @@ function getRandomRating(config: any): number {
     { rating: 5, percent: config.rating5Percent || 0 }
   ];
   
-  console.log('🎲 Rating generation:');
-  console.log(`   Random: ${random.toFixed(2)}`);
-  console.log(`   Percents: [${ratings.map(r => `${r.rating}=${r.percent}%`).join(', ')}]`);
+  console.log(mts(), '🎲 Rating generation:');
+  console.log(mts(), `   Random: ${random.toFixed(2)}`);
+  console.log(mts(), `   Percents: [${ratings.map(r => `${r.rating}=${r.percent}%`).join(', ')}]`);
   
   for (const { rating, percent } of ratings) {
     cumulative += percent;
-    console.log(`   Checking rating ${rating}: cumulative=${cumulative}, random=${random.toFixed(2)} -> ${random <= cumulative ? '✅ SELECTED' : '❌'}`);
+    console.log(mts(), `   Checking rating ${rating}: cumulative=${cumulative}, random=${random.toFixed(2)} -> ${random <= cumulative ? '✅ SELECTED' : '❌'}`);
     if (random <= cumulative) {
-      console.log(`   ⭐ Final rating: ${rating}`);
+      console.log(mts(), `   ⭐ Final rating: ${rating}`);
       return rating;
     }
   }
   
-  console.log('   ⚠️  No rating matched, using default: 1');
+  console.log(mts(), '   ⚠️  No rating matched, using default: 1');
   return 1; // Default to 1 (excellent)
 }
 

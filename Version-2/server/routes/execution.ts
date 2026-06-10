@@ -6,6 +6,7 @@ import { manualExecution, getExecutionState } from '../services/scheduler.js';
 
 const router = Router();
 const prisma = new PrismaClient();
+const ts = () => `[${new Date().toISOString()}]`;
 
 router.use(authenticate);
 
@@ -65,7 +66,7 @@ router.post('/manual', authorize('ADMIN'), async (req: AuthRequest, res, next) =
     
     // Start execution in background
     manualExecution(restaurantId, count).catch(error => {
-      console.error('Manual execution error:', error);
+      console.error(ts(), 'Manual execution error:', error);
     });
     
     res.json({

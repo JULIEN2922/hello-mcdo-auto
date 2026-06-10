@@ -3,6 +3,12 @@ import { generateScenarios, executeScenarios } from './scenario-executor.js';
 
 const prisma = new PrismaClient();
 
+// Timestamped logging (use helper functions, NOT console override — avoids stacking)
+const ts = () => `[${new Date().toISOString()}]`;
+function log(...args: any[]) { console.log(ts(), ...args); }
+function warn(...args: any[]) { console.warn(ts(), ...args); }
+function error(...args: any[]) { console.error(ts(), ...args); }
+
 interface ExecutionState {
   isRunning: boolean;
   restaurantId?: string;
@@ -77,7 +83,7 @@ function generateExecutionTimes(planning: any, count: number): Date[] {
  */
 async function executePlanning(planning: any): Promise<void> {
   if (executionState.isRunning) {
-    console.log('⚠️  Execution already in progress, skipping...');
+    log('⚠️  Execution already in progress, skipping...');
     return;
   }
   
@@ -92,7 +98,7 @@ async function executePlanning(planning: any): Promise<void> {
     });
     
     if (!restaurant || !restaurant.config) {
-      console.error('❌ Restaurant or config not found');
+      error('❌ Restaurant or config not found');
       return;
     }
     
@@ -101,8 +107,8 @@ async function executePlanning(planning: any): Promise<void> {
     executionState.totalScenarios = count;
     executionState.completed = 0;
     
-    console.log(`\n🎯 Planning active for restaurant ${restaurant.code}`);
-    console.log(`📊 Will execute ${count} scenarios between ${planning.startTime} and ${planning.endTime}`);
+    log(`\n🎯 Planning active for restaurant ${restaurant.code}`);
+    log(`📊 Will execute ${count} scenarios between ${planning.startTime} and ${planning.endTime}`);
     
     // Generate scenarios
     const scenarios = await generateScenarios(planning.restaurantId, count);
@@ -118,11 +124,11 @@ async function executePlanning(planning: any): Promise<void> {
       const delay = scheduledTime.getTime() - now;
       
       if (delay > 0) {
-        console.log(`⏰ Scenario ${i + 1}/${count} scheduled for ${scheduledTime.toLocaleTimeString('fr-FR')}`);
+        log(`⏰ Scenario ${i + 1}/${count} scheduled for ${scheduledTime.toLocaleTimeString('fr-FR')}`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
       
-      console.log(`\n🚀 Executing scenario ${i + 1}/${count}...`);
+      log(`\n🚀 Executing scenario ${i + 1}/${count}...`);
       
       // Execute with concurrency control
       const results = await executeScenarios([scenario], restaurant.config.concurrency);
@@ -153,13 +159,13 @@ async function executePlanning(planning: any): Promise<void> {
       
       executionState.completed = i + 1;
       
-      console.log(`✅ Scenario ${i + 1}/${count} completed and saved`);
+      log(`✅ Scenario ${i + 1}/${count} completed and saved`);
     }
     
-    console.log(`\n🎉 All ${count} scenarios completed for planning!`);
+    log(`\n🎉 All ${count} scenarios completed for planning!`);
     
   } catch (error: any) {
-    console.error('❌ Error executing planning:', error.message);
+    error('❌ Error executing planning:', error.message);
   } finally {
     executionState.isRunning = false;
     executionState.restaurantId = undefined;
@@ -189,7 +195,7 @@ export async function checkPlannings(): Promise<void> {
     // Check each planning
     for (const planning of plannings) {
       if (isPlanningActive(planning)) {
-        console.log(`\n✅ Active planning found: ${planning.restaurant.name} (${planning.dayOfWeek} ${planning.startTime}-${planning.endTime})`);
+        log(`\n✅ Active planning found: ${planning.restaurant.name} (${planning.dayOfWeek} ${planning.startTime}-${planning.endTime})`);
         
         // Check if we already executed the FULL batch for THIS specific time slot today
         const now = new Date();
@@ -215,15 +221,15 @@ export async function checkPlannings(): Promise<void> {
         const expectedCount = planning.minScenarios; // Minimum expected
         
         if (existingLogs.length < expectedCount) {
-          console.log(`🚀 Starting execution for this time slot (${existingLogs.length}/${expectedCount} scenarios executed)...`);
+          log(`🚀 Starting execution for this time slot (${existingLogs.length}/${expectedCount} scenarios executed)...`);
           await executePlanning(planning);
         } else {
-          console.log(`⏭️  Already executed ${existingLogs.length} scenarios for this time slot (minimum ${expectedCount})`);
+          log(`⏭️  Already executed ${existingLogs.length} scenarios for this time slot (minimum ${expectedCount})`);
         }
       }
     }
   } catch (error: any) {
-    console.error('❌ Error checking plannings:', error.message);
+    error('❌ Error checking plannings:', error.message);
   }
 }
 
@@ -231,7 +237,7 @@ export async function checkPlannings(): Promise<void> {
  * Start the scheduler (check every minute)
  */
 export function startScheduler(): void {
-  console.log('🔄 Scheduler started - checking plannings every minute...');
+  log('🔄 Scheduler started - checking plannings every minute...');
   
   // Initial check
   checkPlannings();
@@ -276,8 +282,8 @@ export async function manualExecution(
       throw new Error('Restaurant or config not found');
     }
     
-    console.log(`\n🚀 Manual execution for restaurant ${restaurant.code}`);
-    console.log(`📊 Executing ${count} scenarios...`);
+    log(`\n🚀 Manual execution for restaurant ${restaurant.code}`);
+    log(`📊 Executing ${count} scenarios...`);
     
     // Generate scenarios
     const scenarios = await generateScenarios(restaurantId, count);
@@ -314,7 +320,7 @@ export async function manualExecution(
       executionState.completed = i + 1;
     }
     
-    console.log(`\n🎉 Manual execution completed!`);
+    log(`\n🎉 Manual execution completed!`);
     
   } finally {
     executionState.isRunning = false;
