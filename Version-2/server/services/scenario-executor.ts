@@ -47,102 +47,44 @@ async function randomWait(minSec: number, maxSec: number): Promise<void> {
 }
 
 /**
- * Check if the survey has ended by looking for the thank-you message.
- * (feedless in URL is NORMAL - appears from Step 2 onward, do NOT use it)
+ * Call page.evaluate with a JS-level timeout.
+ * If the page JS thread is frozen (SPA transition), returns undefined after timeoutMs instead of hanging forever.
  */
-async function isSurveyEnded(page: Page): Promise<boolean> {
+async function safeEvaluate<T>(page: Page, fn: (...args: any[]) => T, timeoutMs: number, ...args: any[]): Promise<T | undefined> {
   try {
-    return await page.evaluate(() => {
-      return document.body?.innerText?.includes('remercions de votre participation') ?? false;
-    });
-  } catch {
-    return false;
+    return await Promise.race([
+      page.evaluate(fn, ...args),
+      new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('evaluate_timeout')), timeoutMs))
+    ]);
+  } catch (e: any) {
+    if (e.message === 'evaluate_timeout') {
+      return undefined;
+    }
+    throw e;
   }
 }
 
 /**
- * Click "Suivant" and check if the survey ended (thank-you page).
- * Uses simple waits instead of waitForNetworkIdle (Medallia has persistent analytics
- * connections that prevent network idle from ever being detected).
- * Throws SURVEY_ENDED if the survey completed after the click.
+ * Click "Suivant" button — V1-style with timeout safety.
  */
-async function clickNextOrEnd(page: Page): Promise<void> {
+async function clickSuivant(page: Page): Promise<void> {
   await wait(500);
-  
-  // Click the Suivant button with a safety timeout
-  const clicked = await Promise.race([
-    page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
-      const nextButton = buttons.find(b => b.textContent?.includes('Suivant'));
-      if (nextButton) {
-        nextButton.click();
-        return true;
-      }
-      return false;
-    }),
-    new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('clickNextOrEnd: evaluate timed out')), 10000))
-  ]);
-  
-  if (!clicked) {
-    if (await isSurveyEnded(page)) {
-      console.log('🏁 Survey ended (no Suivant button + thank-you page)');
-      throw new Error('SURVEY_ENDED');
+  const result = await safeEvaluate(page, () => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const suivantBtn = buttons.find(b => b.textContent?.includes('Suivant'));
+    if (suivantBtn) {
+      suivantBtn.click();
+      return true;
     }
-    console.warn('⚠️  No Suivant button found, continuing...');
-    return;
-  }
+    return false;
+  }, 8000);
   
-  // Wait for SPA transition (Medallia takes ~1-3s to render next step)
-  // Do NOT use waitForNetworkIdle — Medallia has persistent analytics pings
-  await wait(3000);
-  
-  // Quick check: did we land on the thank-you page?
-  if (await isSurveyEnded(page)) {
-    console.log('🏁 Survey ended after Suivant (thank-you page)');
-    throw new Error('SURVEY_ENDED');
-  }
-  
-  // Wait briefly for the next step's content to appear
-  // If radio buttons appear, the transition completed successfully
-  try {
-    await page.waitForSelector('input[type="radio"]', { timeout: 5000 });
-  } catch {
-    // No radios yet — check if survey ended, otherwise the next step's
-    // waitForRadiosOrFail with longer timeout will handle it
-    if (await isSurveyEnded(page)) {
-      console.log('🏁 Survey ended after Suivant (thank-you page)');
-      throw new Error('SURVEY_ENDED');
-    }
+  if (result) {
+    await wait(1000);
   }
 }
 
-/**
- * Wait for radio buttons to appear, with debug info on timeout.
- * If the survey ended (thank-you page), treats it as success.
- */
-async function waitForRadiosOrFail(page: Page, stepName: string, timeoutMs: number): Promise<void> {
-  try {
-    await page.waitForSelector('input[type="radio"]', { timeout: timeoutMs });
-  } catch {
-    // Check if survey ended (thank-you page) — not an error
-    if (await isSurveyEnded(page)) {
-      console.log(`🏁 [${stepName}] Survey ended (thank-you page) — treating as success`);
-      throw new Error('SURVEY_ENDED');
-    }
-    
-    // Capture page state for debugging
-    const pageTitle = await page.title().catch(() => 'unknown');
-    const pageUrl = page.url();
-    const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 500) || '(empty)').catch(() => '(error)');
-    
-    console.error(`❌ [${stepName}] No radio buttons found after ${timeoutMs}ms`);
-    console.error(`   📍 URL: ${pageUrl}`);
-    console.error(`   📄 Title: "${pageTitle}"`);
-    console.error(`   📝 Body preview: ${bodyText.replace(/\\n/g, ' | ')}`);
-    
-    throw new Error(`Step "${stepName}" failed: No radio buttons found. Page title: "${pageTitle}"`);
-  }
-}
+
 
 /**
  * Get current date and time formatted for the form
@@ -260,8 +202,10 @@ export async function executeScenario(
     
     browser = await puppeteer.launch({
       headless: config.headless,
+      slowMo: 50, // V1 uses this — critical for Calendra date picker & masked inputs
       args: launchArgs,
-      env: launchEnv
+      env: launchEnv,
+      protocolTimeout: 0 // Disable CDP timeout to prevent Runtime.callFunctionOn timeout on slow SPA transitions
     });
     
     const page = await browser.newPage();
@@ -278,231 +222,119 @@ export async function executeScenario(
     
     // Navigate to form (longer timeout for Tor)
     const url = 'https://survey2.medallia.eu/?hellomcdo';
-    const navigationTimeout = config.useTor ? 120000 : 60000; // 2 minutes with Tor, 1 minute without
-    console.log(`📄 Navigating to: ${url}${config.useTor ? ' (via Tor, may take longer)' : ''}`);
+    const navigationTimeout = config.useTor ? 120000 : 60000;
+    console.log(`📄 Step 1: Navigating to: ${url}${config.useTor ? ' (via Tor, may take longer)' : ''}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: navigationTimeout });
-    
     await randomWait(config.delayMin, config.delayMax);
     
     // Step 1: Click Begin button
-    console.log('📄 Step 1: Starting survey...');
-    await page.waitForSelector('#buttonBegin', { timeout: 10000 });
     await page.click('#buttonBegin');
-    // Wait for SPA transition to load Step 2 (cold start may be slow)
-    // Do NOT use waitForNetworkIdle — Medallia has persistent analytics connections
-    await wait(3000);
-    // Quick check: did survey end immediately?
-    if (await isSurveyEnded(page)) {
-      console.log('🏁 Survey ended after Begin (thank-you page)');
-      throw new Error('SURVEY_ENDED');
-    }
-    await randomWait(config.delayMin, config.delayMax);
-    
-    // Step 2: Age selection
-    const ageValue = getAgeValue(config.age || '25-34');
-    console.log(`📄 Step 2: Age selection (${config.age})...`);
-    await waitForRadiosOrFail(page, 'Step 2 - Age', 30000);
-    await page.evaluate((value) => {
-      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
-    }, ageValue);
     await wait(1000);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
     
-    // Step 3: Ticket information
-    console.log('📄 Step 3: Ticket information...');
-    const { date, hour, minute } = getDateTimeNow();
-    
-    await page.waitForSelector('#cal_q_mc_q_date_', { timeout: 10000 });
-    
-    // Fill fields by setting value directly via JS (Medallia date picker blocks page.type)
-    const fillField = async (selector: string, value: string) => {
-      await page.evaluate(({sel, val}) => {
-        const el = document.querySelector(sel) as HTMLInputElement;
-        if (!el) return;
-        el.focus();
-        el.value = val;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('blur', { bubbles: true }));
-      }, {sel: selector, val: value});
-      await wait(200);
-    };
-    
-    await fillField('#cal_q_mc_q_date_', date);
-    await randomWait(config.delayMin, config.delayMax);
-    
-    await fillField('#spl_rng_q_mc_q_hour', hour);
-    await randomWait(config.delayMin, config.delayMax);
-    
-    await fillField('#spl_rng_q_mc_q_minute', minute);
-    await randomWait(config.delayMin, config.delayMax);
-    
-    await fillField('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
-    await randomWait(config.delayMin, config.delayMax);
-    
-    await clickNextOrEnd(page);
-    
-    // Check if form validation blocked us (still on ticket page = no radios)
-    let radioCheck = await page.evaluate(() => document.querySelectorAll('input[type="radio"]').length);
-    if (radioCheck === 0) {
-      console.warn('⚠️  Ticket validation failed — retrying with JS value set...');
-      // Re-fill all fields
-      await fillField('#cal_q_mc_q_date_', date);
-      await fillField('#spl_rng_q_mc_q_hour', hour);
-      await fillField('#spl_rng_q_mc_q_minute', minute);
-      await fillField('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
-      await wait(500);
-      await clickNextOrEnd(page);
-      
-      // Re-check after retry: did validation pass this time?
-      radioCheck = await page.evaluate(() => document.querySelectorAll('input[type="radio"]').length);
-      if (radioCheck === 0) {
-        // Still on ticket page — capture validation error details
-        const pageTitle = await page.title().catch(() => 'unknown');
-        const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 800) || '(empty)').catch(() => '(error)');
-        console.error(`❌ Ticket validation still failing after retry. Page: "${pageTitle}"`);
-        console.error(`   📝 Body: ${bodyText.replace(/\\n/g, ' | ')}`);
-        throw new Error(`Step "Step 3 - Ticket" failed: Form validation blocked progression after retry. Check date format and restaurant code. Date="${date}" Hour="${hour}" Min="${minute}" Restaurant="${config.restaurantCode}"`);
-      }
-      console.log('✅ Ticket validation succeeded on retry');
-    }
-    
-    // Step 4: Order location
-    console.log(`📄 Step 4: Order location (${config.location})...`);
-    await waitForRadiosOrFail(page, 'Step 4 - Location', 20000);
-    await wait(500);
-    
-    const locationValue = getLocationValue(config.location);
-    await page.evaluate((value) => {
-      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
-    }, locationValue);
-    await wait(1000);
-    await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
-    
-    // Step 5: Consumption type
-    console.log(`📄 Step 5: Consumption type (${config.consumptionType})...`);
-    await waitForRadiosOrFail(page, 'Step 5 - Consumption', 20000);
-    await wait(500);
-    const consumptionValue = getConsumptionValue(config.consumptionType);
-    await page.evaluate((value) => {
-      (document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement)?.click();
-    }, consumptionValue);
-    await wait(1000);
-    await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
-    
-    // Step 6: Pickup location
-    console.log(`📄 Step 6: Pickup location (${config.pickupLocation})...`);
-    await waitForRadiosOrFail(page, 'Step 6 - Pickup', 20000);
-    await wait(500);
-    const pickupValue = getPickupValue(config.pickupLocation);
-    await page.evaluate((value) => {
-      const radio = document.querySelector(`input[type="radio"][value="${value}"]`) as HTMLInputElement;
-      if (radio) radio.click();
-    }, pickupValue);
-    await wait(1000);
-    await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
-    
-    // Step 7: Overall satisfaction rating
-    // Note: 1=excellent (5 stars visual), 5=very bad (1 star visual)
-    console.log(`📄 Step 7: Overall satisfaction (${config.rating}/5)...`);
-    await waitForRadiosOrFail(page, 'Step 7 - Satisfaction', 20000);
-    await wait(500);
-    
-    // DEBUG: Inspect all radio values
-    const radioValues = await page.evaluate(() => {
+    // Step 2: Age selection (index-based, V1-style)
+    const ageIndex = getAgeIndex(config.age || '25-34');
+    console.log(`📄 Step 2: Age selection (${config.age} → index ${ageIndex})...`);
+    await safeEvaluate(page, (idx) => {
       const radios = document.querySelectorAll('input[type="radio"]');
-      return Array.from(radios).map((r, i) => ({
-        index: i,
-        value: (r as HTMLInputElement).value,
-        name: (r as HTMLInputElement).name
-      }));
-    });
-    console.log(`   📊 Available radios: ${radioValues.map(r => `[${r.index}]=value"${r.value}"`).join(', ')}`);
-    console.log(`   🎯 Looking for radio with value="${config.rating}"`);
+      if (radios[idx]) (radios[idx] as HTMLInputElement).click();
+    }, 8000, ageIndex);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
     
-    const clicked = await page.evaluate((rating) => {
-      const radio = document.querySelector(`input[type="radio"][value="${rating}"]`) as HTMLInputElement;
-      if (radio) {
-        radio.click();
-        return true;
+    // Step 3: Ticket information (V1-style: page.type for all fields)
+    const { date, hour, minute } = getDateTimeNow();
+    console.log(`📄 Step 3: Ticket information...`);
+    await page.type('#cal_q_mc_q_date_', date);
+    await randomWait(config.delayMin, config.delayMax);
+    await page.type('#spl_rng_q_mc_q_hour', hour);
+    await randomWait(config.delayMin, config.delayMax);
+    await page.type('#spl_rng_q_mc_q_minute', minute);
+    await randomWait(config.delayMin, config.delayMax);
+    await page.type('#spl_rng_q_mc_q_idrestaurant', config.restaurantCode);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Step 4: Order location (index-based, V1-style)
+    const locationIndex = getLocationIndex(config.location);
+    console.log(`📄 Step 4: Order location (${config.location} → index ${locationIndex})...`);
+    await safeEvaluate(page, (idx) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[idx]) (radios[idx] as HTMLInputElement).click();
+    }, 8000, locationIndex);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Step 5: Consumption type (V1-style: ALWAYS executed, radios may not exist for some location types)
+    const consumptionIndex = getConsumptionIndex(config.consumptionType);
+    console.log(`📄 Step 5: Consumption type (${config.consumptionType} → index ${consumptionIndex})...`);
+    await safeEvaluate(page, (idx) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[idx]) (radios[idx] as HTMLInputElement).click();
+    }, 8000, consumptionIndex);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Step 6: Pickup location / Platform (V1-style: ALWAYS executed, radios may not exist)
+    const pickupIndex = getPickupIndex(config.location, config.pickupLocation);
+    console.log(`📄 Step 6: Pickup/Platform (${config.pickupLocation} → index ${pickupIndex})...`);
+    await safeEvaluate(page, (idx) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[idx]) (radios[idx] as HTMLInputElement).click();
+    }, 8000, pickupIndex);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Step 7: Overall satisfaction (index-based: 0=best, 4=worst)
+    const ratingIndex = config.rating - 1;
+    console.log(`📄 Step 7: Overall satisfaction (${config.rating}/5 → index ${ratingIndex})...`);
+    await safeEvaluate(page, (idx) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[idx]) (radios[idx] as HTMLInputElement).click();
+    }, 8000, ratingIndex);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Step 8: Detailed dimensions (index-based: click same rating index for each group of 5)
+    console.log(`📄 Step 8: Detailed dimensions (all ${config.rating}/5 → index ${ratingIndex})...`);
+    await safeEvaluate(page, (idx) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      for (let i = idx; i < radios.length; i += 5) {
+        if (radios[i]) (radios[i] as HTMLInputElement).click();
       }
-      return false;
-    }, config.rating);
-    console.log(`   ${clicked ? '✅ Clicked' : '❌ NOT FOUND'}`);
-    await wait(1000);
+    }, 8000, ratingIndex);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
+    await clickSuivant(page);
     
-    // Step 8: Detailed dimensions rating
-    // Note: 1=excellent, 5=very bad (same as V1)
-    console.log(`📄 Step 8: Detailed dimensions (all ${config.rating}/5)...`);
-    await waitForRadiosOrFail(page, 'Step 8 - Dimensions', 20000);
-    await wait(500);
-    await page.evaluate((rating) => {
-      const radios = document.querySelectorAll(`input[type="radio"][value="${rating}"]`);
-      radios.forEach((r: any) => r.click());
-    }, config.rating);
-    await wait(1000);
-    await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
-    
-    // Step 9: Exact order
+    // Step 9: Exact order (index-based: 0=Oui, 1=Non)
     console.log(`📄 Step 9: Exact order (${config.exactOrder ? 'Yes' : 'No'})...`);
-    await waitForRadiosOrFail(page, 'Step 9 - Exact order', 20000);
-    await wait(500);
-    await page.evaluate((isExact) => {
-      const val = isExact ? '1' : '2'; // 1=Oui, 2=Non
-      (document.querySelector(`input[type="radio"][value="${val}"]`) as HTMLInputElement)?.click();
-    }, config.exactOrder);
-    await wait(1000);
+    await safeEvaluate(page, (isExact) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[isExact ? 0 : 1]) (radios[isExact ? 0 : 1] as HTMLInputElement).click();
+    }, 8000, config.exactOrder);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
+    await clickSuivant(page);
     
-    // Step 10: Problem encountered
+    // Step 10: Problem encountered (index-based: 0=Oui, 1=Non)
     console.log(`📄 Step 10: Problem encountered (${config.problemEncountered ? 'Yes' : 'No'})...`);
-    await waitForRadiosOrFail(page, 'Step 10 - Problem', 20000);
-    await wait(500);
-    await page.evaluate((hasProblem) => {
-      const val = hasProblem ? '1' : '2'; // 1=Oui, 2=Non
-      (document.querySelector(`input[type="radio"][value="${val}"]`) as HTMLInputElement)?.click();
-    }, config.problemEncountered);
-    await wait(1000);
+    await safeEvaluate(page, (hasProblem) => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[hasProblem ? 0 : 1]) (radios[hasProblem ? 0 : 1] as HTMLInputElement).click();
+    }, 8000, config.problemEncountered);
     await randomWait(config.delayMin, config.delayMax);
-    await clickNextOrEnd(page);
+    await clickSuivant(page);
     
-    // Step 11: Phone contact (always No) - LAST STEP
-    // Note: Page may close after step 10 if it's actually the last step
-    try {
-      console.log('📄 Step 11: Phone contact (No)...');
-      await waitForRadiosOrFail(page, 'Step 11 - Phone', 5000);
-      await wait(500);
-      await page.evaluate(() => {
-        (document.querySelector(`input[type="radio"][value="2"]`) as HTMLInputElement)?.click(); // 2=Non
-      });
-      await wait(1000);
-      await randomWait(config.delayMin, config.delayMax);
-      
-      // Final submission - page may close after this
-      await clickNextOrEnd(page);
-      
-      // Wait for completion
-      await wait(2000);
-    } catch (error: any) {
-      // SURVEY_ENDED = survey completed (thank-you page)
-      if (error.message === 'SURVEY_ENDED') {
-        throw error; // Re-throw to outer catch which treats it as success
-      }
-      // If page closed or step 11 doesn't exist, that's OK - form is submitted
-      if (error.message?.includes('Target closed') || error.message?.includes('Execution context')) {
-        console.log('📄 Step 11: Skipped (form already submitted)');
-      } else {
-        throw error;
-      }
-    }
+    // Step 11: Phone contact — always Non (index 1)
+    console.log(`📄 Step 11: Phone contact (No)...`);
+    await safeEvaluate(page, () => {
+      const radios = document.querySelectorAll('input[type="radio"]');
+      if (radios[1]) (radios[1] as HTMLInputElement).click();
+    }, 8000);
+    await randomWait(config.delayMin, config.delayMax);
+    await clickSuivant(page);
+    
+    // Wait for completion
+    await wait(2000);
     
     const durationMs = Date.now() - startTime;
     console.log(`✅ Scenario completed in ${(durationMs / 1000).toFixed(1)}s`);
@@ -526,28 +358,6 @@ export async function executeScenario(
     };
     
   } catch (error: any) {
-    // SURVEY_ENDED = survey reached thank-you page gracefully
-    if (error.message === 'SURVEY_ENDED') {
-      const durationMs = Date.now() - startTime;
-      console.log(`✅ Survey ended (thank-you page) — treating as success (${(durationMs / 1000).toFixed(1)}s)`);
-      
-      if (browser) {
-        await browser.close().catch(() => {});
-      }
-      
-      // Restore original console
-      console.log = _log; console.warn = _warn; console.error = _error;
-      
-      return {
-        success: true,
-        scenarioName,
-        durationMs,
-        usedTor: config.useTor,
-        ipAddress,
-        ipCountry
-      };
-    }
-    
     console.error(`❌ Scenario failed: ${error.message}`);
     
     if (browser) {
@@ -755,52 +565,79 @@ export async function generateScenarios(
   return scenarios;
 }
 
-// Helper functions — return radio VALUES (not DOM indices)
-function getAgeValue(age: string): number {
+// Helper functions — return DOM indices (like V1)
+function getAgeIndex(age: string): number {
   const map: Record<string, number> = {
-    '<15': 1,
-    '15-24': 2,
-    '25-34': 3,
-    '35-49': 4,
-    '50+': 5
+    '<15': 0,
+    '15-24': 1,
+    '25-34': 2,
+    '35-49': 3,
+    '50+': 4
   };
-  return map[age] || 3;
+  return map[age] || 2;
 }
 
-function getLocationValue(location: string): number {
+function getLocationIndex(location: string): number {
   const map: Record<string, number> = {
-    'BORNE': 1,
-    'COMPTOIR': 2,
-    'DRIVE': 3,
-    'GUICHET': 4,
-    'MCCAFE': 5,
-    'CLICK_COLLECT_APP': 6,
-    'CLICK_COLLECT_WEB': 7,
-    'LIVRAISON': 8,
-    'TABLETTE': 9
-  };
-  return map[location] || 1;
-}
-
-function getConsumptionValue(type: string): number {
-  return type === 'SUR_PLACE' ? 1 : 2;
-}
-
-// Pickup values are NON-sequential on Medallia: COMPTOIR=1, MCCAFE=4, TABLE=6
-function getPickupValue(location: string): number {
-  const map: Record<string, number> = {
+    'BORNE': 0,
     'COMPTOIR': 1,
+    'DRIVE': 2,
+    'GUICHET': 3,
     'MCCAFE': 4,
-    'TABLE': 6,
-    'MCDRIVE': 1,       // May vary by scenario context
-    'GUICHET_EXTERIEUR': 1,
-    'EXTERIEUR': 1,
-    'UBER_EATS': 1,
-    'DELIVEROO': 2,
-    'JUST_EAT': 3,
-    'MCDO_APP': 4
+    'CLICK_COLLECT_APP': 5,
+    'CLICK_COLLECT_WEB': 6,
+    'LIVRAISON': 7,
+    'TABLETTE': 8
   };
-  return map[location] || 1;
+  return map[location] || 0;
+}
+
+function getConsumptionIndex(type: string): number {
+  return type === 'SUR_PLACE' ? 0 : 1;
+}
+
+// Pickup index depends on the location context (matches V1 SCENARIOS definitions exactly)
+function getPickupIndex(location: string, pickupLocation: string): number {
+  // CLICK_COLLECT_APP / CLICK_COLLECT_WEB: COMPTOIR=0, DRIVE=1, GUICHET_EXTERIEUR=2, EXTERIEUR=3
+  if (location === 'CLICK_COLLECT_APP' || location === 'CLICK_COLLECT_WEB') {
+    const map: Record<string, number> = {
+      'COMPTOIR': 0,
+      'MCDRIVE': 1,
+      'GUICHET_EXTERIEUR': 2,
+      'EXTERIEUR': 3
+    };
+    return map[pickupLocation] ?? 0;
+  }
+  
+  // LIVRAISON: UBER_EATS=0, DELIVEROO=1, JUST_EAT=2, MCDO_APP=3
+  if (location === 'LIVRAISON') {
+    const map: Record<string, number> = {
+      'UBER_EATS': 0,
+      'DELIVEROO': 1,
+      'JUST_EAT': 2,
+      'MCDO_APP': 3
+    };
+    return map[pickupLocation] ?? 0;
+  }
+  
+  // TABLETTE à emporter: COMPTOIR=0, DRIVE=1, MCCAFE=2 (different from other locations!)
+  if (location === 'TABLETTE') {
+    const map: Record<string, number> = {
+      'COMPTOIR': 0,
+      'MCDRIVE': 1,
+      'MCCAFE': 2
+    };
+    return map[pickupLocation] ?? 0;
+  }
+  
+  // BORNE, COMPTOIR, MCCAFE (sur place & à emporter): COMPTOIR=0, MCCAFE=1, TABLE=2
+  // Note: TABLE only appears for SUR_PLACE, not for A_EMPORTER
+  const map: Record<string, number> = {
+    'COMPTOIR': 0,
+    'MCCAFE': 1,
+    'TABLE': 2
+  };
+  return map[pickupLocation] ?? 0;
 }
 
 function getRandomRating(config: any): number {
