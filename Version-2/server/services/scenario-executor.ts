@@ -194,6 +194,13 @@ export async function executeScenario(
       '--disable-blink-features=AutomationControlled',
       '--disable-features=IsolateOrigins,site-per-process',
       '--disable-dev-shm-usage',
+      // Mémoire — évite les OOM / core dumps sur Pterodactyl (RAM limitée)
+      '--max_old_space_size=512',
+      '--single-process',
+      '--no-zygote',
+      '--disable-gpu',
+      '--disable-accelerated-2d-canvas',
+      '--renderer-process-limit=1',
     ];
     if (config.useTor) {
       launchArgs.push(...getTorProxyArgs());

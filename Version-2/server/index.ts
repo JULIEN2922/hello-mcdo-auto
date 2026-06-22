@@ -21,6 +21,44 @@ const ts = () => `[${new Date().toISOString()}]`;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ── Core dump cleanup ──────────────────────────────────────────────
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+
+/**
+ * Supprime les fichiers core.[number] (core dumps) de façon périodique.
+ * Par défaut toutes les 30 minutes, configurable via CLEANUP_CORE_INTERVAL_MIN.
+ */
+function startCoreCleanup(intervalMinutes: number = 30): void {
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  const cleanup = () => {
+    try {
+      const files = fs.readdirSync(PROJECT_ROOT);
+      const coreFiles = files.filter(f => /^core\.\d+$/.test(f));
+      if (coreFiles.length === 0) return;
+
+      for (const file of coreFiles) {
+        try {
+          const filePath = path.join(PROJECT_ROOT, file);
+          fs.unlinkSync(filePath);
+          console.log(ts(), `🧹 Core dump supprimé : ${file}`);
+        } catch (e: any) {
+          console.error(ts(), `❌ Erreur suppression ${file}:`, e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error(ts(), `❌ Erreur scan core dumps:`, e.message);
+    }
+  };
+
+  // Nettoyage immédiat au démarrage
+  cleanup();
+
+  // Puis toutes les X minutes
+  setInterval(cleanup, intervalMs);
+  console.log(ts(), `🧹 Nettoyage core dumps programmé toutes les ${intervalMinutes} min`);
+}
+
 const app = express();
 const PORT = process.env.PORT || 12312;
 
@@ -63,6 +101,10 @@ app.listen(PORT, () => {
   console.log(ts(), `🚀 Server running on http://localhost:${PORT}`);
   console.log(ts(), `📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   
+  // Nettoyage périodique des core dumps (toutes les 30 min par défaut)
+  const cleanupInterval = parseInt(process.env.CLEANUP_CORE_INTERVAL_MIN || '30', 10);
+  startCoreCleanup(cleanupInterval);
+
   // Start the scenario execution scheduler
   startScheduler();
 });
