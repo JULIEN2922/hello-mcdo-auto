@@ -47,8 +47,9 @@ async function randomWait(minSec: number, maxSec: number): Promise<void> {
 }
 
 /**
- * Call page.evaluate with a JS-level timeout.
- * If the page JS thread is frozen (SPA transition), returns undefined after timeoutMs instead of hanging forever.
+ * Call page.evaluate with a JS-level timeout and transient error recovery.
+ * Returns undefined if the call times out or if the page frame is detached/destroyed
+ * (common during SPA transitions in Medallia).
  */
 async function safeEvaluate<T>(page: Page, fn: (...args: any[]) => T, timeoutMs: number, ...args: any[]): Promise<T | undefined> {
   try {
@@ -57,10 +58,36 @@ async function safeEvaluate<T>(page: Page, fn: (...args: any[]) => T, timeoutMs:
       new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error('evaluate_timeout')), timeoutMs))
     ]);
   } catch (e: any) {
-    if (e.message === 'evaluate_timeout') {
-      return undefined;
-    }
+    const msg = e.message || '';
+    // Timeout → skip silently
+    if (msg === 'evaluate_timeout') return undefined;
+    // Detached frame / destroyed context → page navigated, skip silently
+    if (msg.includes('detached Frame') || msg.includes('Execution context was destroyed') || msg.includes('Target closed')) return undefined;
     throw e;
+  }
+}
+
+/**
+ * Safe navigation with retry for transient frame detachment.
+ * "Navigating frame was detached" is common on SPA pages with aggressive redirects,
+ * especially in containerized/headless environments. Retrying resolves most cases.
+ */
+async function safeGoto(page: Page, url: string, timeoutMs: number, maxRetries: number = 2): Promise<void> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: timeoutMs });
+      return; // Success
+    } catch (e: any) {
+      const msg = e.message || '';
+      const isFrameDetach = msg.includes('detached Frame') || msg.includes('Navigating frame was detached');
+      
+      if (isFrameDetach && attempt < maxRetries) {
+        console.log(`⚠️  Frame detached on goto (attempt ${attempt + 1}/${maxRetries + 1}), retrying...`);
+        await wait(2000); // Brief pause before retry
+        continue;
+      }
+      throw e; // Not a frame detach, or out of retries
+    }
   }
 }
 
@@ -192,15 +219,18 @@ export async function executeScenario(
       '--disable-setuid-sandbox',
       // Anti-bot-detection: hide automation flags
       '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
       '--disable-dev-shm-usage',
       // Mémoire — évite les OOM / core dumps sur Pterodactyl (RAM limitée)
-      '--max_old_space_size=512',
-      '--single-process',
+      // NOTE: NE PAS utiliser --single-process — instable, cause "Navigating frame was detached"
       '--no-zygote',
       '--disable-gpu',
-      '--disable-accelerated-2d-canvas',
-      '--renderer-process-limit=1',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-translate',
+      '--disable-default-apps',
+      '--mute-audio',
+      '--no-first-run',
     ];
     if (config.useTor) {
       launchArgs.push(...getTorProxyArgs());
@@ -227,11 +257,11 @@ export async function executeScenario(
     
     await page.setViewport({ width: 1920, height: 1080 });
     
-    // Navigate to form (longer timeout for Tor)
+    // Navigate to form (longer timeout for Tor, with retry for frame detachment)
     const url = 'https://survey2.medallia.eu/?hellomcdo';
     const navigationTimeout = config.useTor ? 120000 : 60000;
     console.log(`📄 Step 1: Navigating to: ${url}${config.useTor ? ' (via Tor, may take longer)' : ''}`);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: navigationTimeout });
+    await safeGoto(page, url, navigationTimeout);
     await randomWait(config.delayMin, config.delayMax);
     
     // Step 1: Click Begin button
